@@ -3,10 +3,10 @@ from flask import Flask, request, jsonify, send_from_directory
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser, PeerChannel
+from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser # Removed PeerChannel import
 from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError
-from telethon.tl.functions import users # Import for GetUsersRequest (to get phone number from profile)
-from telethon.tl.functions.channels import InviteToChannelRequest # Already here, but confirming import
+from telethon.tl.functions import users 
+from telethon.tl.functions.channels import InviteToChannelRequest 
 import csv
 import io
 import traceback
@@ -15,59 +15,50 @@ import re
 import threading
 import json
 
-app = Flask(__name__, static_folder='static', static_url_path='') # Serve static files from 'static' folder
+app = Flask(__name__, static_folder='static', static_url_path='') 
 
-# Global client state. This client will be managed by the application.
 _telegram_client = None
-_client_lock = threading.Lock() # To prevent race conditions if multiple requests happen simultaneously
+_client_lock = threading.Lock() 
 
-# Load Telegram API credentials from environment variables
 API_ID = os.environ.get('TELETHON_API_ID')
 API_HASH = os.environ.get('TELETHON_API_HASH')
-PHONE_NUMBER = os.environ.get('TELETHON_PHONE_NUMBER') # STILL NEEDED IN ENV VARS FOR RE-AUTHENTICATION
-STRING_SESSION_ENV = os.environ.get('TELETHON_STRING_SESSION') # Renamed to avoid clash with telethon.sessions.StringSession
+PHONE_NUMBER = os.environ.get('TELETHON_PHONE_NUMBER') 
+STRING_SESSION_ENV = os.environ.get('TELETHON_STRING_SESSION') 
 
-# --- Helper to get or create the TelethonClient ---
 def get_telegram_client():
     global _telegram_client
     with _client_lock:
         if _telegram_client is None:
             if not API_ID or not API_HASH:
                 raise ValueError("TELETHON_API_ID and TELETHON_API_HASH environment variables must be set.")
-            if not PHONE_NUMBER: # Ensure phone number is present for potential re-auth
+            if not PHONE_NUMBER: 
                  raise ValueError("TELETHON_PHONE_NUMBER environment variable must be set (required for re-authentication).")
             
-            # --- CRITICAL CHANGE HERE ---
-            # If STRING_SESSION_ENV is provided, initialize TelegramClient with a StringSession object
             if STRING_SESSION_ENV:
                 session_obj = StringSession(STRING_SESSION_ENV)
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
             else:
-                # If no string_session is provided, create a new in-memory StringSession for initial auth
                 session_obj = StringSession(None)
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
         return _telegram_client
-
-# --- Flask Routes ---
 
 @app.route('/')
 def serve_index():
     """Serves the index.html file from the static folder."""
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/get_initial_status', methods=['GET', 'POST']) # Allow POST for consistency with other calls
+@app.route('/get_initial_status', methods=['GET', 'POST']) 
 def get_initial_status():
     """
     Returns the initial status of the Telegram client (connected, needs auth code, etc.)
     and pre-fills UI fields with environment variable values.
     Also retrieves the phone number from the connected session if possible.
     """
-    current_phone_number_display = PHONE_NUMBER + " (from env var)" if PHONE_NUMBER else "Not set" # Default display
+    current_phone_number_display = PHONE_NUMBER + " (from env var)" if PHONE_NUMBER else "Not set" 
     
     try:
         client = get_telegram_client()
         with _client_lock:
-            # Attempt to connect if not already connected
             if not client.is_connected():
                 client.connect()
             
@@ -75,23 +66,22 @@ def get_initial_status():
             needs_auth_code = False
             
             if connected:
-                # Get the authenticated user's details to retrieve phone number
                 me_obj = client.get_me()
                 if me_obj and me_obj.phone:
-                    current_phone_number_display = f"+{me_obj.phone}" # Format phone number if found in user object
+                    current_phone_number_display = f"+{me_obj.phone}" 
                 else:
-                    current_phone_number_display = PHONE_NUMBER + " (from env var, not found in profile)" # Fallback and indicate if not in profile
-            elif not STRING_SESSION_ENV: # If not connected and no string_session was initially used
+                    current_phone_number_display = PHONE_NUMBER + " (from env var, not found in profile)" 
+            elif not STRING_SESSION_ENV: 
                 needs_auth_code = True 
         
         return jsonify({
             "api_id": API_ID,
             "api_hash": API_HASH,
-            "phone_number": current_phone_number_display, # Send this for display
+            "phone_number": current_phone_number_display, 
             "connected": connected,
             "needs_auth_code": needs_auth_code
         })
-    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+    except ValueError as e: 
         return jsonify({"error": str(e), "connected": False, "api_id": API_ID, "api_hash": API_HASH, "phone_number": current_phone_number_display}), 500
     except Exception as e:
         traceback.print_exc()
@@ -113,7 +103,6 @@ def send_code_route():
             if not client.is_connected():
                 client.connect()
             if not client.is_user_authorized():
-                # Telethon handles sending code to the phone associated with the client session.
                 client.send_code_request(PHONE_NUMBER)
                 return jsonify({"message": "Verification code sent. Please enter it."})
             else:
@@ -142,13 +131,11 @@ def sign_in_route():
     try:
         client = get_telegram_client()
         with _client_lock:
-            if not client.is_connected(): # Ensure client is connected before signing in
+            if not client.is_connected(): 
                 client.connect()
             client.sign_in(PHONE_NUMBER, phone_code)
             string_session = client.session.save()
             
-            # After successful re-auth, update the global STRING_SESSION_ENV in memory
-            # This updated string MUST be manually copied to Render's env var.
             global STRING_SESSION_ENV
             STRING_SESSION_ENV = string_session 
 
@@ -157,7 +144,6 @@ def sign_in_route():
             print("-----------------------------------------------------------\n")
             print("IMPORTANT: Update the 'TELETHON_STRING_SESSION' environment variable on Render with the string above for future persistent logins.")
             
-            # Get updated phone number for display
             me_obj = client.get_me()
             current_phone_number_display = f"+{me_obj.phone}" if me_obj and me_obj.phone else PHONE_NUMBER + " (from env var, not found in profile)"
 
@@ -166,7 +152,6 @@ def sign_in_route():
         return jsonify({"error": "Two-factor authentication is enabled. This app does not support it currently. Please disable 2FA or use a session string from a 2FA-handled login."}), 403
     except Exception as e:
         traceback.print_exc()
-        # If sign-in fails, discard the client to force re-initialization
         global _telegram_client
         if _telegram_client:
             _telegram_client.disconnect()
@@ -195,7 +180,7 @@ def get_groups_route():
                 for chat in result.chats if getattr(chat, 'megagroup', False)
             ]
             return jsonify({"groups": groups})
-    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+    except ValueError as e: 
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
@@ -217,12 +202,10 @@ def list_members_route():
             if not client.is_connected() or not client.is_user_authorized():
                 return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
 
-            # --- CRITICAL CHANGE HERE: Use client.get_entity to resolve the channel ---
-            # Construct a PeerChannel object which can be resolved by get_entity
+            # --- CRITICAL CHANGE HERE: Pass (ID, Hash) tuple to get_entity ---
             try:
-                target_group_entity = client.get_entity(PeerChannel(group_id, group_hash))
+                target_group_entity = client.get_entity((group_id, group_hash))
             except Exception as e:
-                # Provide a more specific error if get_entity fails
                 return jsonify({"error": f"Failed to resolve group entity (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
 
             participants = client.get_participants(target_group_entity, aggressive=True)
@@ -237,7 +220,7 @@ def list_members_route():
                     'name': name
                 })
             return jsonify({"members": members_data})
-    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+    except ValueError as e: 
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
@@ -275,21 +258,17 @@ def add_members_route():
                 'access_hash': int(row[2]) if row[2] else 0
             })
 
-        # --- CRITICAL CHANGE HERE: Use client.get_entity to resolve the channel ---
-        # Construct a PeerChannel object which can be resolved by get_entity
+        # --- CRITICAL CHANGE HERE: Pass (ID, Hash) tuple to get_entity ---
         try:
-            target_group_entity = client.get_entity(PeerChannel(group_id, group_hash))
+            target_group_entity = client.get_entity((group_id, group_hash))
         except Exception as e:
-            # Provide a more specific error if get_entity fails
             return jsonify({"error": f"Failed to resolve group entity for adding members (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
 
-        # Use a separate thread to run the adding process to avoid blocking the Flask main thread
-        # for long operations with sleep calls.
-        def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): # Use resolved entity
+        def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): 
             added_count = 0
             skipped_count = 0
             errors = []
-            with _client_lock: # Acquire lock for client operation within the thread
+            with _client_lock: 
                 for user in users_list:
                     try:
                         print(f'Attempting to add {user["username"] or user["id"]}')
@@ -311,7 +290,6 @@ def add_members_route():
                             break
 
                         if user_entity:
-                            # Use the resolved target_group_entity
                             client_instance(InviteToChannelRequest(target_group_entity_resolved, [user_entity]))
                             added_count += 1
                             print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
@@ -335,13 +313,12 @@ def add_members_route():
                                  f'Errors: {"; ".join(errors) if errors else "None."}')
                 print(final_message)
 
-        # Pass the resolved target_group_entity to the thread
         add_thread = threading.Thread(target=_add_members_threaded, args=(client, target_group_entity, users_to_add, add_method))
         add_thread.start()
 
         return jsonify({"message": f"Adding members initiated for {len(users_to_add)} users. Progress will be logged on the server. Please allow time for completion due to Telegram's rate limits (60s per user)."}), 202
 
-    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+    except ValueError as e: 
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
