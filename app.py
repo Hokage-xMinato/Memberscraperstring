@@ -1,11 +1,12 @@
 import os
 from flask import Flask, request, jsonify, send_from_directory
 from telethon.sync import TelegramClient
-from telethon.sessions import StringSession # <--- IMPORTANT: Import StringSession
+from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser
+from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser, PeerChannel
 from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError
 from telethon.tl.functions import users # Import for GetUsersRequest (to get phone number from profile)
+from telethon.tl.functions.channels import InviteToChannelRequest # Already here, but confirming import
 import csv
 import io
 import traceback
@@ -13,7 +14,6 @@ import time
 import re
 import threading
 import json
-# Removed tempfile imports and usage, as session handling is now in-memory.
 
 app = Flask(__name__, static_folder='static', static_url_path='') # Serve static files from 'static' folder
 
@@ -44,7 +44,6 @@ def get_telegram_client():
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
             else:
                 # If no string_session is provided, create a new in-memory StringSession for initial auth
-                # Telethon will manage this session in memory until client.session.save() is called.
                 session_obj = StringSession(None)
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
         return _telegram_client
@@ -218,7 +217,14 @@ def list_members_route():
             if not client.is_connected() or not client.is_user_authorized():
                 return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
 
-            target_group_entity = InputPeerChannel(group_id, group_hash)
+            # --- CRITICAL CHANGE HERE: Use client.get_entity to resolve the channel ---
+            # Construct a PeerChannel object which can be resolved by get_entity
+            try:
+                target_group_entity = client.get_entity(PeerChannel(group_id, group_hash))
+            except Exception as e:
+                # Provide a more specific error if get_entity fails
+                return jsonify({"error": f"Failed to resolve group entity (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
+
             participants = client.get_participants(target_group_entity, aggressive=True)
             
             members_data = []
@@ -269,9 +275,17 @@ def add_members_route():
                 'access_hash': int(row[2]) if row[2] else 0
             })
 
+        # --- CRITICAL CHANGE HERE: Use client.get_entity to resolve the channel ---
+        # Construct a PeerChannel object which can be resolved by get_entity
+        try:
+            target_group_entity = client.get_entity(PeerChannel(group_id, group_hash))
+        except Exception as e:
+            # Provide a more specific error if get_entity fails
+            return jsonify({"error": f"Failed to resolve group entity for adding members (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
+
         # Use a separate thread to run the adding process to avoid blocking the Flask main thread
         # for long operations with sleep calls.
-        def _add_members_threaded(client_instance, target_group_entity, users_list, method):
+        def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): # Use resolved entity
             added_count = 0
             skipped_count = 0
             errors = []
@@ -297,7 +311,8 @@ def add_members_route():
                             break
 
                         if user_entity:
-                            client_instance(InviteToChannelRequest(target_group_entity, [user_entity]))
+                            # Use the resolved target_group_entity
+                            client_instance(InviteToChannelRequest(target_group_entity_resolved, [user_entity]))
                             added_count += 1
                             print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
                             time.sleep(60)
@@ -320,8 +335,7 @@ def add_members_route():
                                  f'Errors: {"; ".join(errors) if errors else "None."}')
                 print(final_message)
 
-        target_group_entity = InputPeerChannel(group_id, group_hash)
-        
+        # Pass the resolved target_group_entity to the thread
         add_thread = threading.Thread(target=_add_members_threaded, args=(client, target_group_entity, users_to_add, add_method))
         add_thread.start()
 
@@ -335,7 +349,5 @@ def add_members_route():
 
 
 if __name__ == '__main__':
-    # No need to cleanup tempfile.TemporaryDirectory() explicitly anymore,
-    # as session is now purely in-memory within the Python process.
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
