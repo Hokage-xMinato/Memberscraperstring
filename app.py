@@ -257,3 +257,94 @@ def add_members_route():
 
     try:
         client = get_telegram_client()
+        with _client_lock:
+            if not client.is_connected() or not client.is_user_authorized():
+                return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
+
+        users_to_add = []
+        csv_file = io.StringIO(csv_data)
+        reader = csv.reader(csv_file, delimiter=',', lineterminator='\n')
+        next(reader)  # Skip header
+        for row in reader:
+            if len(row) < 3:
+                print(f'Skipping incomplete user record: {row}')
+                continue
+            users_to_add.append({
+                'username': row[0],
+                'id': int(row[1]) if row[1] else 0,
+                'access_hash': int(row[2]) if row[2] else 0
+            })
+
+        # Use a separate thread to run the adding process to avoid blocking the Flask main thread
+        # for long operations with sleep calls.
+        def _add_members_threaded(client_instance, target_group_entity, users_list, method): # Renamed 'users' to 'users_list'
+            added_count = 0
+            skipped_count = 0
+            errors = []
+            with _client_lock: # Acquire lock for client operation within the thread
+                for user in users_list: # Use users_list here
+                    try:
+                        print(f'Attempting to add {user["username"] or user["id"]}')
+                        user_entity = None
+                        if method == 1:  # by username
+                            if not user['username']:
+                                errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
+                                skipped_count += 1
+                                continue
+                            user_entity = client_instance.get_input_entity(user['username'])
+                        elif method == 2:  # by ID
+                            if not user['id'] or not user['access_hash']:
+                                errors.append(f'Skipping user {user["username"]} due to missing ID/Access Hash for method 2.')
+                                skipped_count += 1
+                                continue
+                            user_entity = InputPeerUser(user['id'], user['access_hash'])
+                        else:
+                            errors.append(f'Invalid add method specified for user {user["username"] or user["id"]}.')
+                            break
+
+                        if user_entity:
+                            client_instance(InviteToChannelRequest(target_group_entity, [user_entity]))
+                            added_count += 1
+                            print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
+                            time.sleep(60)
+                    except PeerFloodError:
+                        errors.append('PeerFloodError: Too many requests. Stopping addition.')
+                        print('Flood error. Stopping.')
+                        break
+                    except UserPrivacyRestrictedError:
+                        skipped_count += 1
+                        errors.append(f'UserPrivacyRestrictedError for {user["username"] or user["id"]}: Privacy restrictions. Skipping.')
+                        print(f'Privacy restrictions for {user["username"] or user["id"]}. Skipping.')
+                    except Exception as e:
+                        skipped_count += 1
+                        errors.append(f'Error adding {user["username"] or user["id"]}: {str(e)}')
+                        traceback.print_exc()
+
+                final_message = (f'Finished adding members. '
+                                 f'Added: {added_count}, Skipped: {skipped_count}. '
+                                 f'Total users processed: {len(users_list)}. ' # Use users_list here
+                                 f'Errors: {"; ".join(errors) if errors else "None."}')
+                print(final_message)
+
+        target_group_entity = InputPeerChannel(group_id, group_hash)
+        
+        add_thread = threading.Thread(target=_add_members_threaded, args=(client, target_group_entity, users_to_add, add_method))
+        add_thread.start()
+
+        return jsonify({"message": f"Adding members initiated for {len(users_to_add)} users. Progress will be logged on the server. Please allow time for completion due to Telegram's rate limits (60s per user)."}), 202
+
+    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    # Clean up the temporary directory when the app exits (e.g., during graceful shutdown)
+    # This might not always run on abrupt exits, but it's good practice.
+    import atexit
+    atexit.register(temp_session_dir.cleanup) 
+
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
