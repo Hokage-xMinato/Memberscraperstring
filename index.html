@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Group Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            width: 100%;
+            max-width: 900px;
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .section {
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            background-color: #fcfcfc;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        input[type="text"],
+        input[type="number"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #6366f1; /* Indigo-500 */
+        }
+        button {
+            background-color: #6366f1; /* Indigo-500 */
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.2s, transform 0.1s;
+            box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3);
+        }
+        button:hover {
+            background-color: #4f46e5; /* Indigo-600 */
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button:disabled {
+            background-color: #a0aec0; /* Gray-400 */
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        .message-box {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            font-size: 15px;
+            word-wrap: break-word;
+        }
+        .message-box.success {
+            background-color: #d1fae5; /* Green-100 */
+            color: #065f46; /* Green-700 */
+            border: 1px solid #34d399; /* Green-400 */
+        }
+        .message-box.error {
+            background-color: #fee2e2; /* Red-100 */
+            color: #991b1b; /* Red-700 */
+            border: 1px solid #ef4444; /* Red-400 */
+        }
+        .message-box.info {
+            background-color: #e0f2fe; /* Light Blue-100 */
+            color: #0369a1; /* Light Blue-700 */
+            border: 1px solid #38b2ac; /* Teal-400 */
+        }
+        .loading-spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #6366f1;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 10px;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 15px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background-color: #f7f8f9;
+            font-weight: 700;
+            color: #555;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        tr:hover {
+            background-color: #f0f2f5;
+        }
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0;
+            font-weight: normal;
+        }
+        .radio-group input[type="radio"] {
+            width: auto;
+            margin-right: 8px;
+        }
+        .hidden {
+            display: none;
+        }
+        /* No userIdDisplay for this version, as it's less relevant without Firebase Auth */
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+                margin-top: 10px;
+            }
+            .section {
+                padding: 15px;
+            }
+            button {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+            .radio-group {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center text-gray-800">Telegram Group Manager</h1>
+        <!-- No userIdDisplay element for this version -->
+
+        <!-- Status Message Box -->
+        <div id="messageBox" class="message-box"></div>
+
+        <!-- Authentication Section -->
+        <div id="authSection" class="section">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">1. Telegram Authentication</h2>
+            <div class="input-group">
+                <p class="text-sm text-gray-600 mb-2">
+                    Note: Your API ID, Hash, Phone Number, and `string_session` must be set as environment variables on Render (see instructions below).
+                    The app will try to connect automatically using the `string_session`.
+                </p>
+                <label for="apiId">API ID:</label>
+                <input type="number" id="apiId" placeholder="Will be loaded from env var" disabled class="bg-gray-100">
+            </div>
+            <div class="input-group">
+                <label for="apiHash">API Hash:</label>
+                <input type="text" id="apiHash" placeholder="Will be loaded from env var" disabled class="bg-gray-100">
+            </div>
+            <div class="input-group">
+                <label for="displayPhoneNumber">Associated Phone Number:</label>
+                <input type="text" id="displayPhoneNumber" placeholder="Will appear after connection" disabled class="bg-gray-100">
+            </div>
+            
+            <button id="connectBtn">Connect to Telegram<span id="connectSpinner" class="loading-spinner"></span></button>
+
+            <div id="codeEntry" class="input-group mt-4 hidden">
+                <p class="text-sm text-gray-600 mb-2">
+                    If automatic connection fails (e.g., `string_session` expired), you might need to re-authenticate.
+                    The code will be sent to the **phone number set as TELETHON_PHONE_NUMBER environment variable on Render**.
+                </p>
+                <label for="phoneCode">Verification Code:</label>
+                <input type="text" id="phoneCode" placeholder="Enter code received on Telegram">
+                <button id="signInBtn" class="mt-4">Sign In<span id="signInSpinner" class="loading-spinner"></span></button>
+                <p class="text-sm text-red-500 mt-2">
+                    After successful sign-in, check Render logs for the new `string_session` and update your environment variables.
+                </p>
+            </div>
+        </div>
+
+        <!-- Operations Section (Initially hidden) -->
+        <div id="operationsSection" class="section hidden">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">2. Group Operations</h2>
+
+            <!-- List Groups -->
+            <h3 class="text-lg font-medium mb-3 text-gray-600">List Available Groups</h3>
+            <button id="listGroupsBtn">List Groups<span id="listGroupsSpinner" class="loading-spinner"></span></button>
+            <div class="table-container mt-4 hidden" id="groupsTableContainer">
+                <table id="groupsTable">
+                    <thead>
+                        <tr>
+                            <th>Select</th>
+                            <th>ID</th>
+                            <th>Title</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Groups will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- List Members -->
+            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">List Group Members</h3>
+            <div class="input-group">
+                <label for="selectedGroupListMembers">Selected Group (from above):</label>
+                <select id="selectedGroupListMembers" disabled class="bg-gray-100"></select>
+            </div>
+            <button id="listMembersBtn">List Members<span id="listMembersSpinner" class="loading-spinner"></span></button>
+            <div class="table-container mt-4 hidden" id="membersTableContainer">
+                <table id="membersTable">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>User ID</th>
+                            <th>Access Hash</th>
+                            <th>Name</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Members will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Add Members -->
+            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">Add Members to Group</h3>
+            <div class="input-group">
+                <label for="selectedGroupAddMembers">Selected Group (from above):</label>
+                <select id="selectedGroupAddMembers" disabled class="bg-gray-100"></select>
+            </div>
+            <div class="input-group">
+                <label for="csvFile">Upload CSV (username,id,access_hash):</label>
+                <input type="file" id="csvFile" accept=".csv">
+            </div>
+            <div class="input-group">
+                <label>Add Method:</label>
+                <div class="radio-group">
+                    <label>
+                        <input type="radio" name="addMethod" value="1" checked> By Username
+                    </label>
+                    <label>
+                        <input type="radio" name="addMethod" value="2"> By ID
+                    </label>
+                </div>
+            </div>
+            <button id="addMembersBtn">Add Members<span id="addMembersSpinner" class="loading-spinner"></span></button>
+        </div>
+    </div>
+
+    <script>
+        // UI Elements
+        const messageBox = document.getElementById('messageBox');
+        const apiIdInput = document.getElementById('apiId');
+        const apiHashInput = document.getElementById('apiHash');
+        const displayPhoneNumberInput = document.getElementById('displayPhoneNumber'); // New element to display phone
+        const connectBtn = document.getElementById('connectBtn');
+        const connectSpinner = document.getElementById('connectSpinner');
+        const codeEntryDiv = document.getElementById('codeEntry');
+        const phoneCodeInput = document.getElementById('phoneCode');
+        const signInBtn = document.getElementById('signInBtn');
+        const signInSpinner = document.getElementById('signInSpinner');
+        const authSection = document.getElementById('authSection');
+        const operationsSection = document.getElementById('operationsSection');
+        const listGroupsBtn = document.getElementById('listGroupsBtn');
+        const listGroupsSpinner = document.getElementById('listGroupsSpinner');
+        const groupsTableBody = document.querySelector('#groupsTable tbody');
+        const groupsTableContainer = document.getElementById('groupsTableContainer');
+        const selectedGroupListMembers = document.getElementById('selectedGroupListMembers');
+        const selectedGroupAddMembers = document.getElementById('selectedGroupAddMembers');
+        const listMembersBtn = document.getElementById('listMembersBtn');
+        const listMembersSpinner = document.getElementById('listMembersSpinner');
+        const membersTableBody = document.querySelector('#membersTable tbody');
+        const membersTableContainer = document.getElementById('membersTableContainer');
+        const csvFileInput = document.getElementById('csvFile');
+        const addMethodRadios = document.querySelectorAll('input[name="addMethod"]');
+        const addMembersBtn = document.getElementById('addMembersBtn');
+        const addMembersSpinner = document.getElementById('addMembersSpinner');
+
+        // State variables
+        let selectedGroupId = null;
+        let selectedGroupHash = null;
+        let allGroups = []; // Store fetched groups
+
+        // --- Utility Functions ---
+        function showMessage(type, message, permanent = false) {
+            messageBox.textContent = message;
+            messageBox.className = `message-box ${type}`; // Reset classes
+            messageBox.style.display = 'block';
+            if (!permanent) {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 5000); // Hide after 5 seconds
+            }
+        }
+
+        function showSpinner(spinnerElement) {
+            spinnerElement.style.display = 'inline-block';
+        }
+
+        function hideSpinner(spinnerElement) {
+            spinnerElement.style.display = 'none';
+        }
+
+        function setButtonLoading(button, spinner, isLoading) {
+            if (isLoading) {
+                button.disabled = true;
+                showSpinner(spinner);
+            } else {
+                button.disabled = false;
+                hideSpinner(spinner);
+            }
+        }
+
+        async function callBackend(endpoint, data = {}) {
+            const url = `/${endpoint}`; // Flask runs on the same host
+            const options = {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            };
+
+            try {
+                const response = await fetch(url, options);
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `HTTP error! status: ${response.status}`);
+                }
+                return result;
+            } catch (error) {
+                console.error(`Backend call to ${endpoint} failed:`, error);
+                throw error;
+            }
+        }
+
+        // --- Event Listeners ---
+
+        window.onload = async () => {
+            showMessage('info', 'Attempting to connect to Telegram client...', true);
+            setButtonLoading(connectBtn, connectSpinner, true);
+            try {
+                // Attempt to get initial data from backend (env vars, connection status)
+                const response = await callBackend('get_initial_status');
+                apiIdInput.value = response.api_id || 'Not set';
+                apiHashInput.value = response.api_hash || 'Not set';
+                displayPhoneNumberInput.value = response.phone_number || 'N/A'; // Display phone number
+
+                if (response.connected) {
+                    authSection.classList.add('hidden');
+                    operationsSection.classList.remove('hidden');
+                    showMessage('success', 'Telegram client connected!', true);
+                } else if (response.needs_auth_code) {
+                    codeEntryDiv.classList.remove('hidden');
+                    showMessage('info', 'Verification code sent. Please enter it.', true);
+                } else {
+                    // This case means API details are missing or initial connection failed without needing a code right away
+                    showMessage('error', 'Failed to connect. Ensure TELETHON_API_ID, TELETHON_API_HASH, TELETHON_PHONE_NUMBER, and TELETHON_STRING_SESSION are set as environment variables on Render.', true);
+                }
+            } catch (error) {
+                showMessage('error', `Error during initial connection: ${error.message}. Ensure backend is running.`, true);
+            } finally {
+                setButtonLoading(connectBtn, connectSpinner, false);
+            }
+        };
+
+
+        connectBtn.addEventListener('click', async () => {
+            // This button's primary role is to trigger send_code if not connected
+            setButtonLoading(connectBtn, connectSpinner, true);
+            showMessage('info', 'Attempting to send code for re-authentication...', true);
+            try {
+                // Backend knows the phone number from ENV vars
+                const response = await callBackend('send_code');
+                showMessage('success', response.message, true);
+                codeEntryDiv.classList.remove('hidden');
+            } catch (error) {
+                showMessage('error', `Error sending code: ${error.message}`, false);
+            } finally {
+                setButtonLoading(connectBtn, connectSpinner, false);
+            }
+        });
+
+        signInBtn.addEventListener('click', async () => {
+            const phoneCode = phoneCodeInput.value;
+
+            if (!phoneCode) {
+                showMessage('error', 'Please enter the verification code.', false);
+                return;
+            }
+
+            setButtonLoading(signInBtn, signInSpinner, true);
+            showMessage('info', 'Signing in...', true);
+
+            try {
+                const response = await callBackend('sign_in', {
+                    phone_code: phoneCode
+                });
+                showMessage('success', response.message, true);
+                authSection.classList.add('hidden');
+                operationsSection.classList.remove('hidden');
+                // Update displayed phone number after successful re-auth
+                displayPhoneNumberInput.value = response.phone_number || 'N/A'; 
+            } catch (error) {
+                showMessage('error', `Error signing in: ${error.message}`, false);
+            } finally {
+                setButtonLoading(signInBtn, signInSpinner, false);
+            }
+        });
+
+        listGroupsBtn.addEventListener('click', async () => {
+            setButtonLoading(listGroupsBtn, listGroupsSpinner, true);
+            showMessage('info', 'Fetching groups...', true);
+            groupsTableBody.innerHTML = ''; // Clear previous groups
+            allGroups = []; // Reset stored groups
+            selectedGroupListMembers.innerHTML = '<option value="">Select a Group</option>';
+            selectedGroupAddMembers.innerHTML = '<option value="">Select a Group</option>';
+            selectedGroupListMembers.disabled = true;
+            selectedGroupAddMembers.disabled = true;
+            groupsTableContainer.classList.add('hidden'); // Hide table until data is ready
+
+            try {
+                const response = await callBackend('get_groups');
+                if (response.groups && response.groups.length > 0) {
+                    response.groups.forEach(group => {
+                        allGroups.push(group); // Store group for later use
+                        const row = groupsTableBody.insertRow();
+                        const radioCell = row.insertCell();
+                        const idCell = row.insertCell();
+                        const titleCell = row.insertCell();
+
+                        const radio = document.createElement('input');
+                        radio.type = 'radio';
+                        radio.name = 'selectedGroup';
+                        radio.value = group.id;
+                        radio.dataset.accessHash = group.access_hash;
+                        radio.dataset.title = group.title;
+                        radioCell.appendChild(radio);
+
+                        idCell.textContent = group.id;
+                        titleCell.textContent = group.title;
+
+                        // Add to dropdowns
+                        const option1 = document.createElement('option');
+                        option1.value = `${group.id}:${group.access_hash}`;
+                        option1.textContent = group.title;
+                        selectedGroupListMembers.appendChild(option1);
+
+                        const option2 = document.createElement('option');
+                        option2.value = `${group.id}:${group.access_hash}`;
+                        option2.textContent = group.title;
+                        selectedGroupAddMembers.appendChild(option2);
+                    });
+                    groupsTableContainer.classList.remove('hidden');
+                    selectedGroupListMembers.disabled = false;
+                    selectedGroupAddMembers.disabled = false;
+                    showMessage('success', `Found ${response.groups.length} groups.`, false);
+                } else {
+                    showMessage('info', 'No megagroups found.', false);
+                }
+            } catch (error) {
+                showMessage('error', `Error listing groups: ${error.message}`, false);
+            } finally {
+                setButtonLoading(listGroupsBtn, listGroupsSpinner, false);
+            }
+        });
+
+        // Event listener for radio buttons to update selectedGroup* dropdowns
+        groupsTableBody.addEventListener('change', (event) => {
+            if (event.target.name === 'selectedGroup' && event.target.type === 'radio') {
+                selectedGroupId = event.target.value;
+                selectedGroupHash = event.target.dataset.accessHash;
+                const selectedTitle = event.target.dataset.title;
+
+                const selectedValue = `${selectedGroupId}:${selectedGroupHash}`;
+                selectedGroupListMembers.value = selectedValue;
+                selectedGroupAddMembers.value = selectedValue;
+            }
+        });
+
+
+        listMembersBtn.addEventListener('click', async () => {
+            const selectedOption = selectedGroupListMembers.value;
+            if (!selectedOption) {
+                showMessage('error', 'Please select a group first.', false);
+                return;
+            }
+            const [groupId, groupHash] = selectedOption.split(':');
+
+            setButtonLoading(listMembersBtn, listMembersSpinner, true);
+            showMessage('info', `Fetching members for group ID: ${groupId}...`, true);
+            membersTableBody.innerHTML = ''; // Clear previous members
+            membersTableContainer.classList.add('hidden'); // Hide table until data is ready
+
+            try {
+                const response = await callBackend('list_members', {
+                    group_id: parseInt(groupId),
+                    group_hash: parseInt(groupHash)
+                });
+                if (response.members && response.members.length > 0) {
+                    response.members.forEach(member => {
+                        const row = membersTableBody.insertRow();
+                        row.insertCell().textContent = member.username || '';
+                        row.insertCell().textContent = member.user_id;
+                        row.insertCell().textContent = member.access_hash;
+                        row.insertCell().textContent = member.name;
+                    });
+                    membersTableContainer.classList.remove('hidden');
+                    showMessage('success', `Found ${response.members.length} members.`, false);
+                } else {
+                    showMessage('info', 'No members found or group is empty.', false);
+                }
+            } catch (error) {
+                showMessage('error', `Error listing members: ${error.message}`, false);
+            } finally {
+                setButtonLoading(listMembersBtn, listMembersSpinner, false);
+            }
+        });
+
+        addMembersBtn.addEventListener('click', async () => {
+            const selectedOption = selectedGroupAddMembers.value;
+            if (!selectedOption) {
+                showMessage('error', 'Please select a group first.', false);
+                return;
+            }
+            const [groupId, groupHash] = selectedOption.split(':');
+
+            const file = csvFileInput.files[0];
+            if (!file) {
+                showMessage('error', 'Please upload a CSV file.', false);
+                return;
+            }
+
+            const addMethod = document.querySelector('input[name="addMethod"]:checked').value;
+
+            setButtonLoading(addMembersBtn, addMembersSpinner, true);
+            showMessage('info', 'Reading CSV and adding members...', true);
+
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const csvData = e.target.result;
+                    try {
+                        const response = await callBackend('add_members', {
+                            group_id: parseInt(groupId),
+                            group_hash: parseInt(groupHash),
+                            add_method: parseInt(addMethod),
+                            csv_data: csvData
+                        });
+                        showMessage('success', response.message, false);
+                    } catch (error) {
+                        showMessage('error', `Error adding members: ${error.message}`, false);
+                    } finally {
+                        setButtonLoading(addMembersBtn, addMembersSpinner, false);
+                    }
+                };
+                reader.readAsText(file); // Read the file as text
+            } catch (error) {
+                showMessage('error', `Error reading CSV file: ${error.message}`, false);
+                setButtonLoading(addMembersBtn, addMembersSpinner, false);
+            }
+        });
+    </script>
+</body>
+</html>
