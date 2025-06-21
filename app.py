@@ -12,6 +12,13 @@ import time
 import re
 import threading
 import json
+import tempfile # <--- NEW: Import tempfile
+
+# Create a temporary directory for Telethon sessions.
+# This directory will exist for the lifetime of the Flask app process.
+# This prevents 'unable to open database file' errors on ephemeral filesystems.
+temp_session_dir = tempfile.TemporaryDirectory()
+TEMP_SESSION_PATH = temp_session_dir.name
 
 app = Flask(__name__, static_folder='static', static_url_path='') # Serve static files from 'static' folder
 
@@ -36,11 +43,12 @@ def get_telegram_client():
                  raise ValueError("TELETHON_PHONE_NUMBER environment variable must be set (required for re-authentication).")
             
             # Use string_session if provided, otherwise fall back to phone number for ephemeral session (for initial auth)
+            # IMPORTANT: Pass TEMP_SESSION_PATH as the session file location.
             if STRING_SESSION:
-                _telegram_client = TelegramClient(STRING_SESSION, int(API_ID), API_HASH)
+                _telegram_client = TelegramClient(os.path.join(TEMP_SESSION_PATH, 'session'), int(API_ID), API_HASH)
+                _telegram_client.session.set_dc(STRING_SESSION) # Load string session data
             else:
-                # If no string_session, create a new ephemeral session for initial authentication
-                _telegram_client = TelegramClient(PHONE_NUMBER, int(API_ID), API_HASH)
+                _telegram_client = TelegramClient(os.path.join(TEMP_SESSION_PATH, PHONE_NUMBER), int(API_ID), API_HASH)
         return _telegram_client
 
 # --- Flask Routes ---
@@ -71,9 +79,11 @@ def get_initial_status():
             
             if connected:
                 # Get the authenticated user's details to retrieve phone number
-                me = client(users.GetUsersRequest(id=[client.get_me().id]))[0] # Get current user details
-                if me and me.phone:
-                    current_phone_number_display = f"+{me.phone}" # Format phone number if found in user object
+                # We fetch 'me' object to get the actual phone number associated with the session.
+                # Use client.get_me() directly, then fetch full user details if needed.
+                me_obj = client.get_me()
+                if me_obj and me_obj.phone:
+                    current_phone_number_display = f"+{me_obj.phone}" # Format phone number if found in user object
                 else:
                     current_phone_number_display = PHONE_NUMBER + " (from env var, not found in profile)" # Fallback and indicate if not in profile
             elif not STRING_SESSION: # If not connected and no string_session was initially used
@@ -153,8 +163,8 @@ def sign_in_route():
             print("IMPORTANT: Update the 'TELETHON_STRING_SESSION' environment variable on Render with the string above for future persistent logins.")
             
             # Get updated phone number for display
-            me = client(users.GetUsersRequest(id=[client.get_me().id]))[0]
-            current_phone_number_display = f"+{me.phone}" if me and me.phone else PHONE_NUMBER + " (from env var, not found in profile)"
+            me_obj = client.get_me()
+            current_phone_number_display = f"+{me_obj.phone}" if me_obj and me_obj.phone else PHONE_NUMBER + " (from env var, not found in profile)"
 
             return jsonify({"message": "Signed in successfully! Session printed to logs. Please update Render ENV var.", "phone_number": current_phone_number_display})
     except SessionPasswordNeededError:
@@ -265,12 +275,12 @@ def add_members_route():
 
         # Use a separate thread to run the adding process to avoid blocking the Flask main thread
         # for long operations with sleep calls.
-        def _add_members_threaded(client_instance, target_group_entity, users, method):
+        def _add_members_threaded(client_instance, target_group_entity, users_list, method): # Renamed 'users' to 'users_list'
             added_count = 0
             skipped_count = 0
             errors = []
             with _client_lock: # Acquire lock for client operation within the thread
-                for user in users:
+                for user in users_list: # Use users_list here
                     try:
                         print(f'Attempting to add {user["username"] or user["id"]}')
                         user_entity = None
@@ -310,7 +320,7 @@ def add_members_route():
 
                 final_message = (f'Finished adding members. '
                                  f'Added: {added_count}, Skipped: {skipped_count}. '
-                                 f'Total users processed: {len(users)}. '
+                                 f'Total users processed: {len(users_list)}. ' # Use users_list here
                                  f'Errors: {"; ".join(errors) if errors else "None."}')
                 print(final_message)
 
@@ -329,5 +339,10 @@ def add_members_route():
 
 
 if __name__ == '__main__':
+    # Clean up the temporary directory when the app exits (e.g., during graceful shutdown)
+    # This might not always run on abrupt exits, but it's good practice.
+    import atexit
+    atexit.register(temp_session_dir.cleanup) 
+
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
