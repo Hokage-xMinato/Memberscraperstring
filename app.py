@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser # Removed PeerChannel import
+from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser
 from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError
 from telethon.tl.functions import users 
 from telethon.tl.functions.channels import InviteToChannelRequest 
@@ -38,7 +38,7 @@ def get_telegram_client():
                 session_obj = StringSession(STRING_SESSION_ENV)
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
             else:
-                session_obj = StringSession(None)
+                session_obj = StringSession(None) # Create an empty in-memory session if no string is provided
                 _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
         return _telegram_client
 
@@ -190,10 +190,10 @@ def get_groups_route():
 def list_members_route():
     """Lists members of a selected group and returns them."""
     data = request.json
-    group_id = data.get('group_id')
-    group_hash = data.get('group_hash')
+    group_id_str = data.get('group_id') # Renamed to avoid confusion with int
+    group_hash_str = data.get('group_hash') # Renamed to avoid confusion with int
 
-    if not all([group_id, group_hash]):
+    if not all([group_id_str, group_hash_str]):
         return jsonify({"error": "Missing group ID or hash"}), 400
 
     try:
@@ -202,11 +202,25 @@ def list_members_route():
             if not client.is_connected() or not client.is_user_authorized():
                 return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
 
-            # --- CRITICAL CHANGE HERE: Pass (ID, Hash) tuple to get_entity ---
             try:
-                target_group_entity = client.get_entity((group_id, group_hash))
+                # Add debugging prints here
+                print(f"DEBUG: list_members - Raw group_id: '{group_id_str}' (type: {type(group_id_str)})")
+                print(f"DEBUG: list_members - Raw group_hash: '{group_hash_str}' (type: {type(group_hash_str)})")
+
+                group_id_int = int(group_id_str)
+                group_hash_int = int(group_hash_str)
+                
+                print(f"DEBUG: list_members - Converted group_id_int: {group_id_int} (type: {type(group_id_int)})")
+                print(f"DEBUG: list_members - Converted group_hash_int: {group_hash_int} (type: {type(group_hash_int)})")
+
+                target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
+                print(f"DEBUG: list_members - Successfully created InputPeerChannel: {target_group_entity}")
+                
+            except ValueError:
+                return jsonify({"error": f"Invalid group ID or hash format. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
             except Exception as e:
-                return jsonify({"error": f"Failed to resolve group entity (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
+                print(f"DEBUG: list_members - Error creating InputPeerChannel: {e}")
+                return jsonify({"error": f"Failed to create group entity object (ID: '{group_id_str}', Hash: '{group_hash_str}'). Detail: {str(e)}"}), 400
 
             participants = client.get_participants(target_group_entity, aggressive=True)
             
@@ -230,12 +244,12 @@ def list_members_route():
 def add_members_route():
     """Adds users from provided CSV data to a selected group."""
     data = request.json
-    group_id = data.get('group_id')
-    group_hash = data.get('group_hash')
+    group_id_str = data.get('group_id')
+    group_hash_str = data.get('group_hash')
     add_method = data.get('add_method')
     csv_data = data.get('csv_data')
 
-    if not all([group_id, group_hash, add_method, csv_data]):
+    if not all([group_id_str, group_hash_str, add_method, csv_data]):
         return jsonify({"error": "Missing group ID, hash, add method, or CSV data"}), 400
 
     try:
@@ -258,11 +272,26 @@ def add_members_route():
                 'access_hash': int(row[2]) if row[2] else 0
             })
 
-        # --- CRITICAL CHANGE HERE: Pass (ID, Hash) tuple to get_entity ---
         try:
-            target_group_entity = client.get_entity((group_id, group_hash))
+            # Add debugging prints here
+            print(f"DEBUG: add_members - Raw group_id: '{group_id_str}' (type: {type(group_id_str)})")
+            print(f"DEBUG: add_members - Raw group_hash: '{group_hash_str}' (type: {type(group_hash_str)})")
+
+            group_id_int = int(group_id_str)
+            group_hash_int = int(group_hash_str)
+
+            print(f"DEBUG: add_members - Converted group_id_int: {group_id_int} (type: {type(group_id_int)})")
+            print(f"DEBUG: add_members - Converted group_hash_int: {group_hash_int} (type: {type(group_hash_int)})")
+
+            target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
+            print(f"DEBUG: add_members - Successfully created InputPeerChannel: {target_group_entity}")
+
+        except ValueError:
+            return jsonify({"error": f"Invalid group ID or hash format for adding members. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
         except Exception as e:
-            return jsonify({"error": f"Failed to resolve group entity for adding members (ID: {group_id}, Hash: {group_hash}). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
+            print(f"DEBUG: add_members - Error creating InputPeerChannel: {e}")
+            return jsonify({"error": f"Failed to create group entity object for adding members (ID: '{group_id_str}', Hash: '{group_hash_str}'). Detail: {str(e)}"}), 400
+
 
         def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): 
             added_count = 0
@@ -278,7 +307,7 @@ def add_members_route():
                                 errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
                                 skipped_count += 1
                                 continue
-                            user_entity = client_instance.get_input_entity(user['username'])
+                            user_entity = client_instance.get_input_entity(user['username']) 
                         elif method == 2:  # by ID
                             if not user['id'] or not user['access_hash']:
                                 errors.append(f'Skipping user {user["username"]} due to missing ID/Access Hash for method 2.')
