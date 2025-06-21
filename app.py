@@ -4,7 +4,7 @@ from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser
 from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError
-from telethon.tl.functions import users # Import for GetUsersRequest
+from telethon.tl.functions import users # Import for GetUsersRequest (to get phone number from profile)
 import csv
 import io
 import traceback
@@ -314,4 +314,20 @@ def add_members_route():
                                  f'Errors: {"; ".join(errors) if errors else "None."}')
                 print(final_message)
 
-        target_group
+        target_group_entity = InputPeerChannel(group_id, group_hash)
+        
+        add_thread = threading.Thread(target=_add_members_threaded, args=(client, target_group_entity, users_to_add, add_method))
+        add_thread.start()
+
+        return jsonify({"message": f"Adding members initiated for {len(users_to_add)} users. Progress will be logged on the server. Please allow time for completion due to Telegram's rate limits (60s per user)."}), 202
+
+    except ValueError as e: # Catch errors from get_telegram_client for missing env vars
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
