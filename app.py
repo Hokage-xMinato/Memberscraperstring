@@ -4,7 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser, User, Channel, Chat 
-from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError, UserNotMutualContactError, UserAlreadyParticipantError # Imported UserAlreadyParticipantError
+from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError, UserNotMutualContactError, UserAlreadyParticipantError 
 from telethon.tl.functions import users 
 from telethon.tl.functions.channels import InviteToChannelRequest 
 import csv
@@ -357,7 +357,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
             for p in current_participants:
                 existing_member_ids.add(p.id)
                 if p.username:
-                    existing_member_usernames.add(p.username.lower()) # Store in lower case for case-insensitive check
+                    existing_member_usernames.add(p.username.lower()) 
             print(f"THREAD DEBUG: Found {len(existing_member_ids)} existing members.")
         except Exception as e:
             print(f"THREAD WARNING: Could not fetch existing members due to: {e}. Skipping pre-check for existing members. This might lead to 'UserAlreadyParticipantError'.")
@@ -380,9 +380,9 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 errors.append(f'User {user["username"] or user["id"]} already in group. Skipping.')
                 print(f'User {user["username"] or user["id"]} already in group. Skipping.')
                 current_user_index += 1
-                continue # Skip to next user
+                continue 
 
-            try:
+            try: # This is the inner try block for individual user additions
                 print(f'Attempting to add {user["username"] or user["id"]} (User {current_user_index + 1}/{len(users_list)})')
                 user_entity = None
                 if add_method == 1:  # by username
@@ -425,7 +425,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                     errors.append(f'PeerFloodError: Maximum retries ({max_flood_retries}) exceeded. Stopping addition after {added_count} users added and {len(users_list) - current_user_index} users remaining.')
                     print(f'Flood error. Max retries exceeded. Stopping.')
                     break 
-            except (UserPrivacyRestrictedError, UserNotMutualContactError, UserAlreadyParticipantError) as e: # Added UserAlreadyParticipantError here
+            except (UserPrivacyRestrictedError, UserNotMutualContactError, UserAlreadyParticipantError) as e:
                 skipped_count += 1
                 errors.append(f'{e.__class__.__name__} for {user["username"] or user["id"]}: {str(e)}. Skipping.')
                 print(f'{e.__class__.__name__} for {user["username"] or user["id"]}. Skipping.')
@@ -446,7 +446,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                      f'Errors: {"; ".join(errors) if errors else "None."}')
     print(final_message)
 
-    except Exception as e:
+    except Exception as e: # This is the outer catch for critical thread errors, correctly indented
         print(f"THREAD CRITICAL ERROR: An unexpected error occurred in the adding thread: {e}")
         traceback.print_exc()
         errors.append(f"CRITICAL THREAD ERROR: {str(e)}") 
