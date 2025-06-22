@@ -1,6 +1,6 @@
 import os
 from flask import Flask, request, jsonify, send_from_directory
-from telethon import TelegramClient # Import TelegramClient (non-sync version)
+from telethon import TelegramClient 
 from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser
@@ -15,7 +15,7 @@ import re
 import threading
 import json
 import asyncio 
-import functools # Import functools for wraps
+import functools 
 
 app = Flask(__name__, static_folder='static', static_url_path='') 
 
@@ -25,15 +25,10 @@ API_HASH = os.environ.get('TELETHON_API_HASH')
 PHONE_NUMBER = os.environ.get('TELETHON_PHONE_NUMBER') 
 STRING_SESSION_ENV = os.environ.get('TELETHON_STRING_SESSION') 
 
-# No global _telegram_client instance that's kept connected for Flask routes.
-# Each relevant Flask route will create and manage its own client.
-
 # Decorator to handle running async Flask routes
 def run_async(f):
     @functools.wraps(f) 
     def wrapper(*args, **kwargs):
-        # This will create a new event loop for each request and run the async function in it.
-        # This is safe because the TelegramClient will also be created and connected within this same loop.
         return asyncio.run(f(*args, **kwargs))
     return wrapper
 
@@ -71,7 +66,7 @@ async def get_initial_status():
     current_phone_number_display = PHONE_NUMBER + " (from env var)" if PHONE_NUMBER else "Not set" 
     client = None
     try:
-        client = await get_telegram_client_per_request_async() # Get a new client
+        client = await get_telegram_client_per_request_async() 
         
         connected = await client.is_user_authorized() 
         needs_auth_code = False
@@ -115,7 +110,7 @@ async def send_code_route():
 
     client = None
     try:
-        client = await get_telegram_client_per_request_async() # Get a new client
+        client = await get_telegram_client_per_request_async() 
         
         if not await client.is_user_authorized(): 
             await client.send_code_request(PHONE_NUMBER) 
@@ -150,7 +145,7 @@ async def sign_in_route():
 
     client = None
     try:
-        client = await get_telegram_client_per_request_async() # Get a new client
+        client = await get_telegram_client_per_request_async() 
         
         await client.sign_in(PHONE_NUMBER, phone_code) 
         string_session = client.session.save()
@@ -184,7 +179,7 @@ async def get_groups_route():
     """Lists available megagroups for the authenticated user."""
     client = None
     try:
-        client = await get_telegram_client_per_request_async() # Get a new client
+        client = await get_telegram_client_per_request_async() 
         
         if not await client.is_user_authorized(): 
             return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
@@ -219,26 +214,29 @@ async def list_members_route():
     """Lists members of a selected group and returns them."""
     data = request.json
     group_id_str = data.get('group_id')
+    group_hash_str = data.get('group_hash') # Ensure this is retrieved
 
-    if not group_id_str: 
-        return jsonify({"error": "Missing group ID"}), 400
+    if not all([group_id_str, group_hash_str]): 
+        return jsonify({"error": "Missing group ID or hash"}), 400
 
     client = None
     try:
-        client = await get_telegram_client_per_request_async() # Get a new client
+        client = await get_telegram_client_per_request_async() 
         
         if not await client.is_user_authorized(): 
             return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
 
         try:
             group_id_int = int(group_id_str)
-            target_group_entity = await client.get_input_entity(group_id_int) 
+            group_hash_int = int(group_hash_str)
+            # CRITICAL FIX: Explicitly create InputPeerChannel
+            target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
             
         except ValueError:
-            return jsonify({"error": f"Invalid group ID format. ID: '{group_id_str}'"}), 400
+            return jsonify({"error": f"Invalid group ID or hash format. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
         except Exception as e:
             traceback.print_exc()
-            return jsonify({"error": f"Failed to resolve group entity (ID: '{group_id_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 500
+            return jsonify({"error": f"Failed to resolve group entity (ID: '{group_id_str}', Hash: '{group_hash_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 500
 
         participants = await client.get_participants(target_group_entity, aggressive=True) 
         
@@ -329,7 +327,8 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
         print(f"THREAD DEBUG: Async client connected and authorized in thread for group ID: {group_id_int}")
         
-        target_group_entity = await thread_client.get_input_entity(group_id_int)
+        # CRITICAL FIX: Explicitly create InputPeerChannel for the target group
+        target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
         
         added_count = 0
         skipped_count = 0
