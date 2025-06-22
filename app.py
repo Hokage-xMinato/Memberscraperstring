@@ -17,6 +17,7 @@ import json
 
 app = Flask(__name__, static_folder='static', static_url_path='') 
 
+# Global client state, managed by the main Flask thread
 _telegram_client = None
 _client_lock = threading.Lock() 
 
@@ -26,6 +27,7 @@ PHONE_NUMBER = os.environ.get('TELETHON_PHONE_NUMBER')
 STRING_SESSION_ENV = os.environ.get('TELETHON_STRING_SESSION') 
 
 def get_telegram_client():
+    """Initializes or returns the global TelegramClient for the main Flask thread."""
     global _telegram_client
     with _client_lock:
         if _telegram_client is None:
@@ -34,12 +36,9 @@ def get_telegram_client():
             if not PHONE_NUMBER: 
                  raise ValueError("TELETHON_PHONE_NUMBER environment variable must be set (required for re-authentication).")
             
-            if STRING_SESSION_ENV:
-                session_obj = StringSession(STRING_SESSION_ENV)
-                _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
-            else:
-                session_obj = StringSession(None) # Create an empty in-memory session if no string is provided
-                _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
+            # Use StringSession object directly for in-memory session handling
+            session_obj = StringSession(STRING_SESSION_ENV) if STRING_SESSION_ENV else StringSession(None)
+            _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
         return _telegram_client
 
 @app.route('/')
@@ -52,13 +51,13 @@ def get_initial_status():
     """
     Returns the initial status of the Telegram client (connected, needs auth code, etc.)
     and pre-fills UI fields with environment variable values.
-    Also retrieves the phone number from the connected session if possible.
     """
     current_phone_number_display = PHONE_NUMBER + " (from env var)" if PHONE_NUMBER else "Not set" 
     
     try:
         client = get_telegram_client()
         with _client_lock:
+            # Ensure client is connected when status is checked
             if not client.is_connected():
                 client.connect()
             
@@ -66,12 +65,14 @@ def get_initial_status():
             needs_auth_code = False
             
             if connected:
+                # Get the authenticated user's details to retrieve phone number
                 me_obj = client.get_me()
                 if me_obj and me_obj.phone:
                     current_phone_number_display = f"+{me_obj.phone}" 
                 else:
                     current_phone_number_display = PHONE_NUMBER + " (from env var, not found in profile)" 
             elif not STRING_SESSION_ENV: 
+                # If not connected and no string_session was initially provided, assume needs initial auth
                 needs_auth_code = True 
         
         return jsonify({
@@ -155,7 +156,7 @@ def sign_in_route():
         global _telegram_client
         if _telegram_client:
             _telegram_client.disconnect()
-            _telegram_client = None
+            _telegram_client = None # Reset client on failure to force re-initialization
         return jsonify({"error": str(e)}), 500
 
 
@@ -196,19 +197,18 @@ def list_members_route():
     # group_hash_str is no longer strictly needed for get_input_entity with just the ID
     # but keeping it in the frontend payload doesn't hurt.
 
-    if not group_id_str: # Only check for group_id_str now
+    if not group_id_str: 
         return jsonify({"error": "Missing group ID"}), 400
 
     try:
         client = get_telegram_client()
-        with _client_lock:
+        with _client_lock: # Ensure the global client is locked during operations
             if not client.is_connected() or not client.is_user_authorized():
                 return jsonify({"error": "Telegram client not connected or authorized. Please connect/authenticate."}), 401
 
             try:
                 group_id_int = int(group_id_str)
                 # Use client.get_input_entity() which is the most robust way to get an InputPeer from an ID
-                # It correctly resolves whether it's a channel or a chat.
                 target_group_entity = client.get_input_entity(group_id_int)
                 
             except ValueError:
@@ -229,16 +229,16 @@ def list_members_route():
                     'name': name
                 })
             return jsonify({"members": members_data})
-    except Exception as e: # Catch-all for any unhandled exceptions
+    except Exception as e: 
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/add_members', methods=['POST'])
 def add_members_route():
-    """Adds users from provided CSV data to a selected group."""
+    """Initiates adding users from provided CSV data to a selected group in a separate thread."""
     data = request.json
     group_id_str = data.get('group_id')
-    group_hash_str = data.get('group_hash') # Still passed from frontend, but get_input_entity handles resolution
+    group_hash_str = data.get('group_hash') 
     add_method = data.get('add_method')
     csv_data = data.get('csv_data')
 
@@ -246,6 +246,8 @@ def add_members_route():
         return jsonify({"error": "Missing group ID, hash, add method, or CSV data"}), 400
 
     try:
+        # Before starting the thread, quickly check if the main client is authorized
+        # The thread will then create its own client
         client = get_telegram_client()
         with _client_lock:
             if not client.is_connected() or not client.is_user_authorized():
@@ -265,75 +267,111 @@ def add_members_route():
                 'access_hash': int(row[2]) if row[2] else 0
             })
 
-        try:
-            group_id_int = int(group_id_str)
-            # Use client.get_input_entity() for adding members as well.
-            target_group_entity = client.get_input_entity(group_id_int)
-
-        except ValueError:
-            return jsonify({"error": f"Invalid group ID format for adding members. ID: '{group_id_str}'"}), 400
-        except Exception as e:
-            traceback.print_exc()
-            return jsonify({"error": f"Failed to resolve group entity for adding members (ID: '{group_id_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 400
-
-
-        def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): 
-            added_count = 0
-            skipped_count = 0
-            errors = []
-            with _client_lock: 
-                for user in users_list:
-                    try:
-                        print(f'Attempting to add {user["username"] or user["id"]}')
-                        user_entity = None
-                        if method == 1:  # by username
-                            if not user['username']:
-                                errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
-                                skipped_count += 1
-                                continue
-                            user_entity = client_instance.get_input_entity(user['username']) 
-                        elif method == 2:  # by ID
-                            if not user['id'] or not user['access_hash']:
-                                errors.append(f'Skipping user {user["username"]} due to missing ID/Access Hash for method 2.')
-                                skipped_count += 1
-                                continue
-                            user_entity = InputPeerUser(user['id'], user['access_hash'])
-                        else:
-                            errors.append(f'Invalid add method specified for user {user["username"] or user["id"]}.')
-                            break
-
-                        if user_entity:
-                            client_instance(InviteToChannelRequest(target_group_entity_resolved, [user_entity]))
-                            added_count += 1
-                            print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
-                            time.sleep(60)
-                    except PeerFloodError:
-                        errors.append('PeerFloodError: Too many requests. Stopping addition.')
-                        print('Flood error. Stopping.')
-                        break
-                    except UserPrivacyRestrictedError:
-                        skipped_count += 1
-                        errors.append(f'UserPrivacyRestrictedError for {user["username"] or user["id"]}: Privacy restrictions. Skipping.')
-                        print(f'Privacy restrictions for {user["username"] or user["id"]}. Skipping.')
-                    except Exception as e:
-                        skipped_count += 1
-                        errors.append(f'Error adding {user["username"] or user["id"]}: {str(e)}')
-                        traceback.print_exc()
-
-                final_message = (f'Finished adding members. '
-                                 f'Added: {added_count}, Skipped: {skipped_count}. '
-                                 f'Total users processed: {len(users_list)}. '
-                                 f'Errors: {"; ".join(errors) if errors else "None."}')
-                print(final_message)
-
-        add_thread = threading.Thread(target=_add_members_threaded, args=(client, target_group_entity, users_to_add, add_method))
+        # --- CRITICAL CHANGE FOR THREADED OPERATION ---
+        # Pass necessary env vars to the thread function
+        # The thread will create its OWN client instance
+        add_thread = threading.Thread(target=_add_members_threaded, args=(
+            API_ID, 
+            API_HASH, 
+            STRING_SESSION_ENV, 
+            PHONE_NUMBER,
+            int(group_id_str), # Pass as int directly
+            int(group_hash_str), # Pass as int directly
+            users_to_add, 
+            int(add_method)
+        ))
         add_thread.start()
 
         return jsonify({"message": f"Adding members initiated for {len(users_to_add)} users. Progress will be logged on the server. Please allow time for completion due to Telegram's rate limits (60s per user)."}), 202
 
-    except Exception as e: # Catch-all for any unhandled exceptions
+    except Exception as e: 
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+# --- Function to run in the separate thread ---
+def _add_members_threaded(api_id, api_hash, string_session_env, phone_number, group_id_int, group_hash_int, users_list, add_method):
+    """
+    This function runs in a separate thread and manages its own TelegramClient instance.
+    """
+    thread_client = None
+    try:
+        # Create a new TelegramClient instance for this thread
+        print(f"THREAD DEBUG: Initializing client in new thread. API_ID: {api_id}")
+        session_obj = StringSession(string_session_env) if string_session_env else StringSession(None)
+        thread_client = TelegramClient(session_obj, int(api_id), api_hash)
+        
+        # Connect and ensure authorization within this thread
+        thread_client.connect()
+        if not thread_client.is_user_authorized():
+            # This case means the string_session_env was not valid for the thread's client.
+            # In a real scenario, you'd need a robust re-auth mechanism here,
+            # but for this app, we rely on main client being authorized.
+            # If it gets here, it means the session from env var is bad for the new client.
+            print("THREAD ERROR: Client in new thread is not authorized. Stopping add operation.")
+            return # Exit thread
+
+        print(f"THREAD DEBUG: Client connected and authorized in thread for group ID: {group_id_int}")
+        
+        # Resolve the target group entity within this thread's client context
+        target_group_entity = thread_client.get_input_entity(group_id_int)
+        
+        added_count = 0
+        skipped_count = 0
+        errors = []
+
+        for user in users_list:
+            try:
+                print(f'Attempting to add {user["username"] or user["id"]}')
+                user_entity = None
+                if add_method == 1:  # by username
+                    if not user['username']:
+                        errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
+                        skipped_count += 1
+                        continue
+                    # Use thread_client for get_input_entity
+                    user_entity = thread_client.get_input_entity(user['username']) 
+                elif add_method == 2:  # by ID
+                    if not user['id'] or not user['access_hash']:
+                        errors.append(f'Skipping user {user["username"]} due to missing ID/Access Hash for method 2.')
+                        skipped_count += 1
+                        continue
+                    user_entity = InputPeerUser(user['id'], user['access_hash'])
+                else:
+                    errors.append(f'Invalid add method specified for user {user["username"] or user["id"]}.')
+                    break
+
+                if user_entity:
+                    # Use thread_client for InviteToChannelRequest
+                    thread_client(InviteToChannelRequest(target_group_entity, [user_entity]))
+                    added_count += 1
+                    print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
+                    time.sleep(60) # Telegram rate limit delay
+            except PeerFloodError:
+                errors.append('PeerFloodError: Too many requests. Stopping addition.')
+                print('Flood error. Stopping.')
+                break
+            except UserPrivacyRestrictedError:
+                skipped_count += 1
+                errors.append(f'UserPrivacyRestrictedError for {user["username"] or user["id"]}: Privacy restrictions. Skipping.')
+                print(f'Privacy restrictions for {user["username"] or user["id"]}. Skipping.')
+            except Exception as e:
+                skipped_count += 1
+                errors.append(f'Error adding {user["username"] or user["id"]}: {str(e)}')
+                traceback.print_exc()
+
+        final_message = (f'Finished adding members. '
+                         f'Added: {added_count}, Skipped: {skipped_count}. '
+                         f'Total users processed: {len(users_list)}. '
+                         f'Errors: {"; ".join(errors) if errors else "None."}')
+        print(final_message)
+
+    except Exception as e:
+        print(f"THREAD CRITICAL ERROR: An unexpected error occurred in the adding thread: {e}")
+        traceback.print_exc()
+    finally:
+        if thread_client and thread_client.is_connected():
+            print("THREAD DEBUG: Disconnecting client in thread.")
+            thread_client.disconnect()
 
 
 if __name__ == '__main__':
