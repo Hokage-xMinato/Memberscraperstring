@@ -175,10 +175,12 @@ def get_groups_route():
                 limit=200,
                 hash=0
             ))
+            # Filter to include only megagroups (supergroups)
             groups = [
                 {'id': chat.id, 'title': chat.title, 'access_hash': chat.access_hash}
                 for chat in result.chats if getattr(chat, 'megagroup', False)
             ]
+            
             return jsonify({"groups": groups})
     except ValueError as e: 
         return jsonify({"error": str(e)}), 400
@@ -191,10 +193,11 @@ def list_members_route():
     """Lists members of a selected group and returns them."""
     data = request.json
     group_id_str = data.get('group_id')
-    group_hash_str = data.get('group_hash') # Keep hash as it might be needed for get_entity
+    # group_hash_str is no longer strictly needed for get_input_entity with just the ID
+    # but keeping it in the frontend payload doesn't hurt.
 
-    if not all([group_id_str, group_hash_str]):
-        return jsonify({"error": "Missing group ID or hash"}), 400
+    if not group_id_str: # Only check for group_id_str now
+        return jsonify({"error": "Missing group ID"}), 400
 
     try:
         client = get_telegram_client()
@@ -204,18 +207,15 @@ def list_members_route():
 
             try:
                 group_id_int = int(group_id_str)
-                group_hash_int = int(group_hash_str) # Still convert to int
-
-                # --- CRITICAL FIX: Use client.get_entity with (ID, Hash) tuple ---
-                # This is the most reliable way to resolve the entity from ID and Access Hash
-                target_group_entity = client.get_entity(InputPeerChannel(group_id_int, group_hash_int))
+                # Use client.get_input_entity() which is the most robust way to get an InputPeer from an ID
+                # It correctly resolves whether it's a channel or a chat.
+                target_group_entity = client.get_input_entity(group_id_int)
                 
             except ValueError:
-                return jsonify({"error": f"Invalid group ID or hash format. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
+                return jsonify({"error": f"Invalid group ID format. ID: '{group_id_str}'"}), 400
             except Exception as e:
-                # Catch any other error during entity creation/resolution
-                traceback.print_exc() # Print full traceback for deeper debug if this fails
-                return jsonify({"error": f"Failed to resolve group entity (ID: '{group_id_str}', Hash: '{group_hash_str}'). Ensure it's a valid channel/megagroup you have access to. Detail: {str(e)}"}), 400
+                traceback.print_exc()
+                return jsonify({"error": f"Failed to resolve group entity (ID: '{group_id_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 400
 
             participants = client.get_participants(target_group_entity, aggressive=True)
             
@@ -229,9 +229,7 @@ def list_members_route():
                     'name': name
                 })
             return jsonify({"members": members_data})
-    except ValueError as e: 
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
+    except Exception as e: # Catch-all for any unhandled exceptions
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -240,7 +238,7 @@ def add_members_route():
     """Adds users from provided CSV data to a selected group."""
     data = request.json
     group_id_str = data.get('group_id')
-    group_hash_str = data.get('group_hash')
+    group_hash_str = data.get('group_hash') # Still passed from frontend, but get_input_entity handles resolution
     add_method = data.get('add_method')
     csv_data = data.get('csv_data')
 
@@ -269,17 +267,14 @@ def add_members_route():
 
         try:
             group_id_int = int(group_id_str)
-            group_hash_int = int(group_hash_str)
-
-            # --- CRITICAL FIX: Use client.get_entity with InputPeerChannel ---
-            # This is the most reliable way to resolve the entity for adding members as well.
-            target_group_entity = client.get_entity(InputPeerChannel(group_id_int, group_hash_int))
+            # Use client.get_input_entity() for adding members as well.
+            target_group_entity = client.get_input_entity(group_id_int)
 
         except ValueError:
-            return jsonify({"error": f"Invalid group ID or hash format for adding members. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
+            return jsonify({"error": f"Invalid group ID format for adding members. ID: '{group_id_str}'"}), 400
         except Exception as e:
-            traceback.print_exc() # Print full traceback for deeper debug if this fails
-            return jsonify({"error": f"Failed to resolve group entity for adding members (ID: '{group_id_str}', Hash: '{group_hash_str}'). Detail: {str(e)}"}), 400
+            traceback.print_exc()
+            return jsonify({"error": f"Failed to resolve group entity for adding members (ID: '{group_id_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 400
 
 
         def _add_members_threaded(client_instance, target_group_entity_resolved, users_list, method): 
@@ -336,9 +331,7 @@ def add_members_route():
 
         return jsonify({"message": f"Adding members initiated for {len(users_to_add)} users. Progress will be logged on the server. Please allow time for completion due to Telegram's rate limits (60s per user)."}), 202
 
-    except ValueError as e: 
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
+    except Exception as e: # Catch-all for any unhandled exceptions
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
