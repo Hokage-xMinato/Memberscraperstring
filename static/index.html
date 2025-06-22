@@ -296,7 +296,10 @@
             <div id="csvOutputSection" class="mt-4 hidden">
                 <h3 class="text-lg font-medium mb-2 text-gray-600">CSV Data for Members</h3>
                 <textarea id="csvOutput" readonly></textarea>
-                <button id="copyCsvBtn" class="mt-2">Copy to CSV</button>
+                <div class="mt-2 flex gap-4">
+                    <button id="copyCsvBtn">Copy to CSV</button>
+                    <button id="downloadCsvBtn">Download CSV</button>
+                </div>
             </div>
 
 
@@ -352,6 +355,7 @@
         const csvOutputSection = document.getElementById('csvOutputSection'); // New element
         const csvOutput = document.getElementById('csvOutput'); // New element
         const copyCsvBtn = document.getElementById('copyCsvBtn'); // New element
+        const downloadCsvBtn = document.getElementById('downloadCsvBtn'); // New element
         const csvFileInput = document.getElementById('csvFile');
         const addMethodRadios = document.querySelectorAll('input[name="addMethod"]');
         const addMembersBtn = document.getElementById('addMembersBtn');
@@ -587,19 +591,20 @@
                         row.insertCell().textContent = member.username || '';
                         row.insertCell().textContent = member.user_id;
                         row.insertCell().textContent = member.access_hash;
-                        row.insertCell().textContent = member.name;
+                        row.insertCell().textContent = member.name; // Keep name in table for display
                     });
                     membersTableContainer.classList.remove('hidden');
                     showMessage('success', `Found ${response.members.length} members.`, false);
                     
-                    // --- Generate and display CSV ---
-                    let csvContent = '"username","user_id","access_hash","name"\n';
+                    // --- Generate and display CSV (SIMPLIFIED HEADER & DATA) ---
+                    // Using the format that the user confirmed works for re-upload
+                    let csvContent = '"username","user_id","access_hash"\n'; 
                     response.members.forEach(member => {
                         const username = member.username ? `"${member.username.replace(/"/g, '""')}"` : '""';
                         const userId = `"${member.user_id}"`;
                         const accessHash = member.access_hash ? `"${member.access_hash}"` : '""';
-                        const name = member.name ? `"${member.name.replace(/"/g, '""')}"` : '""';
-                        csvContent += `${username},${userId},${accessHash},${name}\n`;
+                        // Do NOT include the 'name' field in this CSV export
+                        csvContent += `${username},${userId},${accessHash}\n`;
                     });
                     csvOutput.value = csvContent;
                     csvOutputSection.classList.remove('hidden'); // Show CSV section
@@ -628,6 +633,25 @@
             } catch (err) {
                 showMessage('error', 'Failed to copy CSV data. Please manually select and copy.', false);
                 console.error('Failed to copy text:', err);
+            }
+        });
+
+        // Event listener for Download CSV button (NEW)
+        downloadCsvBtn.addEventListener('click', () => {
+            const filename = 'telegram_members.csv';
+            const text = csvOutput.value;
+            const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            if (link.download !== undefined) { // Feature detection for HTML5 download attribute
+                link.setAttribute('href', URL.createObjectURL(blob));
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden'; // Hide the link
+                document.body.appendChild(link); // Append to body
+                link.click(); // Simulate click
+                document.body.removeChild(link); // Clean up
+                showMessage('success', `CSV data downloaded as "${filename}"!`, false);
+            } else {
+                showMessage('error', 'Your browser does not support direct CSV download. Please use "Copy to CSV" and save manually.', false);
             }
         });
 
