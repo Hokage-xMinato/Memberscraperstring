@@ -250,6 +250,7 @@
                             <th>Select</th>
                             <th>ID</th>
                             <th>Title</th>
+                            <!-- Type column removed -->
                         </tr>
                     </thead>
                     <tbody>
@@ -404,7 +405,7 @@
                 apiIdInput.value = response.api_id || 'Not set';
                 apiHashInput.value = response.api_hash || 'Not set';
                 displayPhoneNumberInput.value = response.phone_number || 'N/A'; // Display phone number
-
+                
                 if (response.connected) {
                     authSection.classList.add('hidden');
                     operationsSection.classList.remove('hidden');
@@ -487,6 +488,7 @@
                         const radioCell = row.insertCell();
                         const idCell = row.insertCell();
                         const titleCell = row.insertCell();
+                        // Removed Type cell here
 
                         const radio = document.createElement('input');
                         radio.type = 'radio';
@@ -502,20 +504,20 @@
                         // Add to dropdowns
                         const option1 = document.createElement('option');
                         option1.value = `${group.id}:${group.access_hash}`;
-                        option1.textContent = group.title;
+                        option1.textContent = group.title; // Removed type from dropdown
                         selectedGroupListMembers.appendChild(option1);
 
                         const option2 = document.createElement('option');
                         option2.value = `${group.id}:${group.access_hash}`;
-                        option2.textContent = group.title;
+                        option2.textContent = group.title; // Removed type from dropdown
                         selectedGroupAddMembers.appendChild(option2);
                     });
                     groupsTableContainer.classList.remove('hidden');
                     selectedGroupListMembers.disabled = false;
                     selectedGroupAddMembers.disabled = false;
-                    showMessage('success', `Found ${response.groups.length} groups.`, false);
+                    showMessage('success', `Found ${response.groups.length} groups.`, false); // Reverted message
                 } else {
-                    showMessage('info', 'No megagroups found.', false);
+                    showMessage('info', 'No megagroups found.', false); // Reverted message
                 }
             } catch (error) {
                 showMessage('error', `Error listing groups: ${error.message}`, false);
@@ -541,7 +543,7 @@
         listMembersBtn.addEventListener('click', async () => {
             const selectedOption = selectedGroupListMembers.value;
             if (!selectedOption) {
-                showMessage('error', 'Please select a group first.', false);
+                showMessage('error', 'Please select a group first.', false); // Reverted message
                 return;
             }
             const [groupId, groupHash] = selectedOption.split(':');
@@ -579,7 +581,7 @@
         addMembersBtn.addEventListener('click', async () => {
             const selectedOption = selectedGroupAddMembers.value;
             if (!selectedOption) {
-                showMessage('error', 'Please select a group first.', false);
+                showMessage('error', 'Please select a group first.', false); // Reverted message
                 return;
             }
             const [groupId, groupHash] = selectedOption.split(':');
