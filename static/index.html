@@ -170,8 +170,18 @@
         .hidden {
             display: none;
         }
-        /* No userIdDisplay for this version, as it's less relevant without Firebase Auth */
-
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            box-sizing: border-box;
+            resize: vertical;
+            margin-top: 15px;
+        }
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .container {
@@ -282,6 +292,14 @@
                 </table>
             </div>
 
+            <!-- CSV Output Section -->
+            <div id="csvOutputSection" class="mt-4 hidden">
+                <h3 class="text-lg font-medium mb-2 text-gray-600">CSV Data for Members</h3>
+                <textarea id="csvOutput" readonly></textarea>
+                <button id="copyCsvBtn" class="mt-2">Copy to CSV</button>
+            </div>
+
+
             <!-- Add Members -->
             <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">Add Members to Group</h3>
             <div class="input-group">
@@ -331,6 +349,9 @@
         const listMembersSpinner = document.getElementById('listMembersSpinner');
         const membersTableBody = document.querySelector('#membersTable tbody');
         const membersTableContainer = document.getElementById('membersTableContainer');
+        const csvOutputSection = document.getElementById('csvOutputSection'); // New element
+        const csvOutput = document.getElementById('csvOutput'); // New element
+        const copyCsvBtn = document.getElementById('copyCsvBtn'); // New element
         const csvFileInput = document.getElementById('csvFile');
         const addMethodRadios = document.querySelectorAll('input[name="addMethod"]');
         const addMembersBtn = document.getElementById('addMembersBtn');
@@ -478,6 +499,7 @@
             selectedGroupListMembers.disabled = true;
             selectedGroupAddMembers.disabled = true;
             groupsTableContainer.classList.add('hidden'); // Hide table until data is ready
+            csvOutputSection.classList.add('hidden'); // Hide CSV section
 
             try {
                 const response = await callBackend('get_groups');
@@ -552,6 +574,7 @@
             showMessage('info', `Fetching members for group ID: ${groupId}...`, true);
             membersTableBody.innerHTML = ''; // Clear previous members
             membersTableContainer.classList.add('hidden'); // Hide table until data is ready
+            csvOutputSection.classList.add('hidden'); // Hide CSV section by default
 
             try {
                 const response = await callBackend('list_members', {
@@ -568,15 +591,46 @@
                     });
                     membersTableContainer.classList.remove('hidden');
                     showMessage('success', `Found ${response.members.length} members.`, false);
+                    
+                    // --- Generate and display CSV ---
+                    let csvContent = '"username","user_id","access_hash","name"\n';
+                    response.members.forEach(member => {
+                        const username = member.username ? `"${member.username.replace(/"/g, '""')}"` : '""';
+                        const userId = `"${member.user_id}"`;
+                        const accessHash = member.access_hash ? `"${member.access_hash}"` : '""';
+                        const name = member.name ? `"${member.name.replace(/"/g, '""')}"` : '""';
+                        csvContent += `${username},${userId},${accessHash},${name}\n`;
+                    });
+                    csvOutput.value = csvContent;
+                    csvOutputSection.classList.remove('hidden'); // Show CSV section
+
                 } else {
                     showMessage('info', 'No members found or group is empty.', false);
+                    csvOutput.value = ''; // Clear CSV content
+                    csvOutputSection.classList.add('hidden'); // Ensure CSV section is hidden
                 }
             } catch (error) {
                 showMessage('error', `Error listing members: ${error.message}`, false);
+                csvOutput.value = ''; // Clear CSV content on error
+                csvOutputSection.classList.add('hidden'); // Ensure CSV section is hidden on error
             } finally {
                 setButtonLoading(listMembersBtn, listMembersSpinner, false);
             }
         });
+
+        // Event listener for Copy CSV button
+        copyCsvBtn.addEventListener('click', () => {
+            csvOutput.select(); // Select the text in the textarea
+            csvOutput.setSelectionRange(0, 99999); // For mobile devices
+            try {
+                document.execCommand('copy'); // Copy the selected text
+                showMessage('success', 'CSV data copied to clipboard! You can now paste it into a text editor and save as .csv', false);
+            } catch (err) {
+                showMessage('error', 'Failed to copy CSV data. Please manually select and copy.', false);
+                console.error('Failed to copy text:', err);
+            }
+        });
+
 
         addMembersBtn.addEventListener('click', async () => {
             const selectedOption = selectedGroupAddMembers.value;
