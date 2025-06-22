@@ -14,7 +14,8 @@ import time
 import re
 import threading
 import json
-import asyncio # Import asyncio for event loop management
+import asyncio 
+import functools # Import functools for wraps
 
 app = Flask(__name__, static_folder='static', static_url_path='') 
 
@@ -53,8 +54,6 @@ async def get_telegram_client_async():
             session_obj = StringSession(STRING_SESSION_ENV) if STRING_SESSION_ENV else StringSession(None)
             _telegram_client = TelegramClient(session_obj, int(API_ID), API_HASH)
             
-            # Connect the client when it's first created
-            # This is crucial for Telethon 1.x which expects connect before many operations
             if not _telegram_client.is_connected():
                 print("Connecting main Telegram client...")
                 await _telegram_client.connect()
@@ -63,7 +62,11 @@ async def get_telegram_client_async():
 
 # Decorator to handle running async Flask routes
 def run_async(f):
+    @functools.wraps(f) # CRITICAL FIX: Use functools.wraps here
     def wrapper(*args, **kwargs):
+        # We need to run async operations in a separate event loop if not in one,
+        # or reuse if one is already running (e.g., if Gunicorn starts an event loop).
+        # However, for Flask's sync context, the safest is to run the async function in a new dedicated loop.
         return asyncio.run(f(*args, **kwargs))
     return wrapper
 
@@ -227,7 +230,6 @@ async def list_members_route():
 
         try:
             group_id_int = int(group_id_str)
-            # Use client.get_input_entity() which is the most robust way to get an InputPeer from an ID
             target_group_entity = await client.get_input_entity(group_id_int) # Await async method
             
         except ValueError:
@@ -292,8 +294,8 @@ def add_members_route():
             API_ID, 
             API_HASH, 
             STRING_SESSION_ENV, 
-            int(group_id_str), # Pass as int directly
-            int(group_hash_str), # Pass as int directly
+            int(group_id_str), 
+            int(group_hash_str), 
             users_to_add, 
             int(add_method)
         )))
@@ -317,15 +319,13 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
         session_obj = StringSession(string_session_env) if string_session_env else StringSession(None)
         thread_client = TelegramClient(session_obj, int(api_id), api_hash)
         
-        # Connect and ensure authorization within this thread's client
         await thread_client.connect()
         if not await thread_client.is_user_authorized():
             print("THREAD ERROR: Client in new thread is not authorized. Stopping add operation.")
-            return # Exit thread
+            return 
 
         print(f"THREAD DEBUG: Async client connected and authorized in thread for group ID: {group_id_int}")
         
-        # Resolve the target group entity within this thread's client context
         target_group_entity = await thread_client.get_input_entity(group_id_int)
         
         added_count = 0
@@ -341,7 +341,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                         errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
                         skipped_count += 1
                         continue
-                    user_entity = await thread_client.get_input_entity(user['username']) # Await here
+                    user_entity = await thread_client.get_input_entity(user['username']) 
                 elif add_method == 2:  # by ID
                     if not user['id'] or not user['access_hash']:
                         errors.append(f'Skipping user {user["username"]} due to missing ID/Access Hash for method 2.')
@@ -353,10 +353,10 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                     break
 
                 if user_entity:
-                    await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) # Await here
+                    await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) 
                     added_count += 1
                     print(f'Successfully added {user["username"] or user["id"]}. Waiting 60 seconds...')
-                    await asyncio.sleep(60) # Use asyncio.sleep for async functions
+                    await asyncio.sleep(60) 
             except PeerFloodError:
                 errors.append('PeerFloodError: Too many requests. Stopping addition.')
                 print('Flood error. Stopping.')
@@ -382,14 +382,9 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
     finally:
         if thread_client and thread_client.is_connected():
             print("THREAD DEBUG: Disconnecting client in thread.")
-            await thread_client.disconnect() # Await here
+            await thread_client.disconnect()
 
 
 if __name__ == '__main__':
-    # Flask is still synchronous, so wrap its run call in asyncio.run if you're mixing async in main thread,
-    # but for a typical Gunicorn deployment, you wouldn't directly run this with asyncio.run().
-    # Gunicorn handles the event loop for Flask.
-    # The key is ensuring each Telethon interaction (even in main Flask routes) happens within an event loop.
-    # We use @run_async decorator for Flask routes to manage this.
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
