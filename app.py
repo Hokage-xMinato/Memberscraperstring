@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from telethon import TelegramClient 
 from telethon.sessions import StringSession 
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser
+from telethon.tl.types import InputPeerEmpty, InputPeerChannel, InputPeerUser, User, Channel, Chat # Added Channel, Chat types
 from telethon.errors.rpcerrorlist import PeerFloodError, UserPrivacyRestrictedError, SessionPasswordNeededError, PhoneNumberInvalidError
 from telethon.tl.functions import users 
 from telethon.tl.functions.channels import InviteToChannelRequest 
@@ -192,10 +192,16 @@ async def get_groups_route():
             hash=0
         ))
         # Filter to include only megagroups (supergroups)
-        groups = [
-            {'id': chat.id, 'title': chat.title, 'access_hash': chat.access_hash}
-            for chat in result.chats if getattr(chat, 'megagroup', False)
-        ]
+        groups = []
+        for chat in result.chats:
+            # Telethon returns different types of chat objects (Chat, Channel, User)
+            # Megagroups are instances of Channel
+            if isinstance(chat, Channel) and chat.megagroup:
+                groups.append({
+                    'id': chat.id,
+                    'title': chat.title,
+                    'access_hash': chat.access_hash
+                })
         
         return jsonify({"groups": groups})
     except ValueError as e: 
@@ -214,7 +220,7 @@ async def list_members_route():
     """Lists members of a selected group and returns them."""
     data = request.json
     group_id_str = data.get('group_id')
-    group_hash_str = data.get('group_hash') # Ensure this is retrieved
+    group_hash_str = data.get('group_hash') 
 
     if not all([group_id_str, group_hash_str]): 
         return jsonify({"error": "Missing group ID or hash"}), 400
@@ -229,8 +235,10 @@ async def list_members_route():
         try:
             group_id_int = int(group_id_str)
             group_hash_int = int(group_hash_str)
-            # CRITICAL FIX: Explicitly create InputPeerChannel
-            target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
+            
+            # CRITICAL FIX: Resolve the full entity object using client.get_entity()
+            # This is the most reliable way to get the correct Peer for GetParticipantsRequest
+            target_group_entity = await client.get_entity(InputPeerChannel(group_id_int, group_hash_int))
             
         except ValueError:
             return jsonify({"error": f"Invalid group ID or hash format. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
@@ -327,8 +335,9 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
         print(f"THREAD DEBUG: Async client connected and authorized in thread for group ID: {group_id_int}")
         
-        # CRITICAL FIX: Explicitly create InputPeerChannel for the target group
-        target_group_entity = InputPeerChannel(group_id_int, group_hash_int)
+        # CRITICAL FIX: Resolve the full entity object using client.get_entity()
+        # This is the most reliable way to get the correct Peer for InviteToChannelRequest
+        target_group_entity = await thread_client.get_entity(InputPeerChannel(group_id_int, group_hash_int))
         
         added_count = 0
         skipped_count = 0
