@@ -278,29 +278,42 @@ def add_members_route():
         return jsonify({"error": "Missing group ID, hash, add method, or CSV data"}), 400
 
     try:
-        # Before starting the thread, ensure we have valid credentials
         if not API_ID or not API_HASH or not STRING_SESSION_ENV or not PHONE_NUMBER:
-            return jsonify({"error": "Missing Telegram API credentials (ID, Hash, String Session, Phone Number) in environment variables."}), 401
+            return jsonify({"error": "Missing Telegram API credentials (ID, Hash, String Session, Phone Number) in environment variables. Please set them on Render."}), 401
 
         users_to_add = []
         csv_file = io.StringIO(csv_data)
         reader = csv.reader(csv_file, delimiter=',', lineterminator='\n')
-        # Skip header if present, assuming first row is header
-        # You might want to add a checkbox in UI for "CSV has header"
-        next(reader, None) # Use next(reader, None) to safely skip header even if file is empty
-        
+        next(reader, None) # Safely skip header row
+
+        row_num = 1 # Start from 1 for header, 2 for first data row
         for row in reader:
-            # My CSV reader expects 4 columns (username,id,access_hash,name).
-            # If the row has fewer columns, it indicates incomplete data for this user.
-            if len(row) < 4: 
-                print(f'Skipping incomplete user record (expected 4 columns, got {len(row)}): {row}')
+            row_num += 1
+            if len(row) < 4:
+                print(f'WARNING: Skipping incomplete user record on row {row_num} (expected 4 columns, got {len(row)}): {row}')
                 continue
             
-            # Python's csv.reader already handles quotes; data will be unquoted here.
             username = row[0].strip() if row[0] else ''
-            user_id = int(row[1].strip()) if row[1].strip() else 0 # Convert to int
-            access_hash = int(row[2].strip()) if row[2].strip() else 0 # Convert to int
-            name = row[3].strip() if row[3] else '' # Name is the fourth column
+            
+            user_id = 0
+            try:
+                user_id = int(row[1].strip())
+            except ValueError:
+                print(f'WARNING: Could not parse user_id "{row[1].strip()}" on row {row_num} as an integer. Setting to 0. Row: {row}')
+                # Continue with user_id 0, Telethon will likely error if this is a required field.
+                
+            access_hash = 0
+            try:
+                # access_hash can sometimes be empty, treat as 0 in that case,
+                # otherwise attempt conversion.
+                # If it's a string like "None", it might still fail int().
+                if row[2].strip(): # Only try to convert if not empty string
+                    access_hash = int(row[2].strip())
+            except ValueError:
+                print(f'WARNING: Could not parse access_hash "{row[2].strip()}" on row {row_num} as an integer. Setting to 0. Row: {row}')
+                # Continue with access_hash 0. Telethon might throw UserIdInvalidError later.
+            
+            name = row[3].strip() if row[3] else ''
 
             users_to_add.append({
                 'username': username,
@@ -338,7 +351,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
     
     flood_retry_count = 0
     max_flood_retries = 3 
-    base_flood_wait_time_seconds = 3600 # 1 hour
+    base_flood_wait_time_seconds = 3600 # 1 hour, used if Telethon's error doesn't specify seconds
 
     try: # Outer try block for the entire async function
         print(f"THREAD DEBUG: Initializing async client in new thread. API_ID: {api_id}")
@@ -348,14 +361,14 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
         await thread_client.connect()
         if not await thread_client.is_user_authorized():
             print("THREAD ERROR: Client in new thread is not authorized. Stopping add operation.")
-            errors.append("Client in adding thread not authorized.")
+            errors.append("Client in adding thread not authorized. Please re-authenticate via the UI.")
             final_message_remaining_users = len(users_list) - 0 
             final_message_str = (f'CRITICAL FAILURE: Addition interrupted early due to authorization. '
                                  f'Added: {added_count}, Skipped: {skipped_count}. '
                                  f'Users remaining: {final_message_remaining_users}. '
                                  f'Errors: {"; ".join(errors)}.')
             print(final_message_str)
-            return # Exit gracefully if not authorized
+            return
 
         print(f"THREAD DEBUG: Async client connected and authorized in thread for group ID: {group_id_int}")
         
@@ -373,12 +386,13 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                     existing_member_usernames.add(p.username.lower()) 
             print(f"THREAD DEBUG: Found {len(existing_member_ids)} existing members.")
         except Exception as e:
-            print(f"THREAD WARNING: Could not fetch existing members due to: {e}. Skipping pre-check for existing members. This might lead to more 'UserAlreadyParticipantError' errors.")
+            print(f"THREAD WARNING: Could not fetch existing members for pre-check due to: {e}. Some 'UserAlreadyParticipantError' might still occur.")
 
         current_user_index = 0
         while current_user_index < len(users_list):
             user = users_list[current_user_index]
             
+            # Check if user is already a participant (more robust than just ID)
             is_already_member = False
             if user['id'] and user['id'] in existing_member_ids:
                 is_already_member = True
@@ -387,8 +401,8 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
             if is_already_member:
                 skipped_count += 1
-                errors.append(f'User {user["username"] or user["id"]} already in group. Skipping due to pre-check.')
-                print(f'User {user["username"] or user["id"]} already in group. Skipping due to pre-check.')
+                errors.append(f'Skipped {user["username"] or user["id"]}: Already in group (pre-check).')
+                print(f'Skipped {user["username"] or user["id"]}: Already in group (pre-check).')
                 current_user_index += 1 
                 continue 
             
@@ -398,22 +412,24 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 
                 if add_method == 1:  # by username
                     if not user['username']:
-                        errors.append(f'Skipping user {user["id"]} due to missing username for method 1.')
+                        errors.append(f'Skipped user ID {user["id"]}: Missing username for "by username" method.')
                         skipped_count += 1
-                        current_user_index += 1 # Advance and continue
+                        current_user_index += 1
                         continue 
                     user_entity = await thread_client.get_input_entity(user['username']) 
                 elif add_method == 2:  # by ID
                     if not user['id'] or user['access_hash'] is None: 
-                        errors.append(f'Skipping user {user["username"] or user["id"]} due to missing ID/Access Hash for method 2.')
+                        errors.append(f'Skipped user {user["username"] or user["id"]}: Missing User ID or Access Hash for "by ID" method.')
                         skipped_count += 1
-                        current_user_index += 1 # Advance and continue
+                        current_user_index += 1
                         continue
-                    user_entity = InputPeerUser(user['id'], user['access_hash'])
+                    # Telethon expects int for user ID and access hash
+                    user_entity = InputPeerUser(int(user['id']), int(user['access_hash']))
                 else: 
-                    errors.append(f'Invalid add method specified for user {user["username"] or user["id"]}.')
+                    errors.append(f'Skipped user {user["username"] or user["id"]}: Invalid add method specified.')
                     break # Exit while loop entirely
 
+                # If we got a user_entity, attempt to invite
                 await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) 
                 added_count += 1
                 print(f'Successfully added {user["username"] or user["id"]}. Waiting 75 seconds...') 
@@ -423,44 +439,48 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
             except PeerFloodError as e:
                 flood_retry_count += 1
+                wait_time = getattr(e, 'seconds', base_flood_wait_time_seconds * (2 ** (flood_retry_count - 1)))
+                wait_time = min(wait_time, 24 * 3600) # Cap at 24 hours
+                
+                error_msg = (f'PeerFloodError for {user["username"] or user["id"]}: Too many requests. '
+                             f'Telegram asks to wait {wait_time/3600:.1f} hours ({wait_time} seconds) before retrying. '
+                             f'(Retry {flood_retry_count}/{max_flood_retries}).')
+                errors.append(error_msg)
+                print(error_msg)
                 if flood_retry_count <= max_flood_retries:
-                    wait_time = getattr(e, 'seconds', base_flood_wait_time_seconds * (2 ** (flood_retry_count - 1)))
-                    wait_time = min(wait_time, 24 * 3600) 
-                    
-                    error_msg = f'PeerFloodError: Too many requests. Waiting {wait_time/3600:.1f} hours before retrying (Retry {flood_retry_count}/{max_flood_retries}).'
-                    errors.append(error_msg)
-                    print(error_msg)
+                    print(f"RECOMMENDATION: Your account is likely flood-limited. Consider pausing for {wait_time/3600:.1f} hours, or using a different account for future operations. The script will wait, but this is a Telegram restriction.")
                     await asyncio.sleep(wait_time)
                     # current_user_index is NOT incremented here, we retry the same user
                 else:
-                    errors.append(f'PeerFloodError: Maximum retries ({max_flood_retries}) exceeded. Stopping addition after {added_count} users added and {len(users_list) - current_user_index} users remaining.')
-                    print(f'Flood error. Max retries exceeded. Stopping.')
-                    break # Exit while loop entirely
+                    errors.append(f'PeerFloodError: Maximum retries ({max_flood_retries}) exceeded for {user["username"] or user["id"]}. Stopping addition.')
+                    print(f'CRITICAL: Max flood retries exceeded. Stopping add operation at user {current_user_index + 1}.')
+                    break 
             except (UserPrivacyRestrictedError, UserNotMutualContactError, UserAlreadyParticipantError, UserIdInvalidError) as e: 
                 skipped_count += 1
-                errors.append(f'{e.__class__.__name__} for {user["username"] or user["id"]}: {str(e)}. Skipping.')
-                print(f'{e.__class__.__name__} for {user["username"] or user["id"]}. Skipping.')
+                errors.append(f'Skipped {user["username"] or user["id"]}: {e.__class__.__name__} - {str(e)}')
+                print(f'Skipped {user["username"] or user["id"]}: {e.__class__.__name__} - {str(e)}')
                 current_user_index += 1 
                 flood_retry_count = 0 
             except Exception as e: 
                 skipped_count += 1
-                errors.append(f'Error adding {user["username"] or user["id"]}: {str(e)}')
+                errors.append(f'Error adding {user["username"] or user["id"]}: {e.__class__.__name__} - {str(e)}')
                 traceback.print_exc()
+                print(f'Unexpected error adding {user["username"] or user["id"]}: {e.__class__.__name__} - {str(e)}')
                 current_user_index += 1 
                 flood_retry_count = 0 
 
-        final_message_remaining_users = len(users_list) - current_user_index
-        final_message_str = (f'Finished adding members. '
-                             f'Added: {added_count}, Skipped: {skipped_count}. '
-                             f'Total users processed: {len(users_list)}. '
-                             f'Users remaining due to interruption: {final_message_remaining_users}. '
-                             f'Errors: {"; ".join(errors) if errors else "None."}')
-        print(final_message_str)
+    final_message_remaining_users = len(users_list) - current_user_index
+    final_message_str = (f'Finished adding members. '
+                         f'Added: {added_count}, Skipped: {skipped_count}. '
+                         f'Total users processed: {len(users_list)}. '
+                         f'Users remaining due to interruption: {final_message_remaining_users}. '
+                         f'Errors: {"; ".join(errors) if errors else "None."}')
+    print(final_message_str)
 
     except Exception as e: 
         print(f"THREAD CRITICAL ERROR: An unexpected error occurred in the adding thread: {e}")
         traceback.print_exc()
-        errors.append(f"CRITICAL THREAD ERROR: {str(e)}") 
+        errors.append(f"CRITICAL THREAD ERROR: {e.__class__.__name__} - {str(e)}") 
         current_user_index_at_crash = locals().get('current_user_index', 0) 
         final_message_remaining_users = len(users_list) - current_user_index_at_crash
         final_message_str = (f'CRITICAL FAILURE: Addition interrupted unexpectedly. '
