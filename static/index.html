@@ -213,11 +213,11 @@
         <!-- Authentication Section -->
         <div id="authSection" class="section">
             <h2 class="text-xl font-semibold mb-4 text-gray-700">1. Telegram Authentication</h2>
+            <p class="text-sm text-gray-600 mb-2">
+                Note: Your API ID, Hash, Phone Number, and `string_session` must be set as environment variables on Render (see instructions below).
+                The app will try to connect automatically using the `string_session`.
+            </p>
             <div class="input-group">
-                <p class="text-sm text-gray-600 mb-2">
-                    Note: Your API ID, Hash, Phone Number, and `string_session` must be set as environment variables on Render (see instructions below).
-                    The app will try to connect automatically using the `string_session`.
-                </p>
                 <label for="apiId">API ID:</label>
                 <input type="number" id="apiId" placeholder="Will be loaded from env var" disabled class="bg-gray-100">
             </div>
@@ -596,15 +596,16 @@
                     membersTableContainer.classList.remove('hidden');
                     showMessage('success', `Found ${response.members.length} members.`, false);
                     
-                    // --- Generate and display CSV (SIMPLIFIED HEADER & DATA) ---
-                    // Using the format that the user confirmed works for re-upload
-                    let csvContent = '"username","user_id","access_hash"\n'; 
+                    // --- Generate and display CSV (UNQUOTED IDS/HASHES) ---
+                    let csvContent = '"username","user_id","access_hash","name"\n'; 
                     response.members.forEach(member => {
+                        // Usernames and names might contain commas or special chars, keep them quoted.
                         const username = member.username ? `"${member.username.replace(/"/g, '""')}"` : '""';
-                        const userId = `"${member.user_id}"`;
-                        const accessHash = member.access_hash ? `"${member.access_hash}"` : '""';
-                        // Do NOT include the 'name' field in this CSV export
-                        csvContent += `${username},${userId},${accessHash}\n`;
+                        // User IDs and Access Hashes are numbers, unquote them.
+                        const userId = member.user_id; 
+                        const accessHash = member.access_hash !== null && member.access_hash !== undefined ? member.access_hash : ''; 
+                        const name = member.name ? `"${member.name.replace(/"/g, '""')}"` : '""'; 
+                        csvContent += `${username},${userId},${accessHash},${name}\n`;
                     });
                     csvOutput.value = csvContent;
                     csvOutputSection.classList.remove('hidden'); // Show CSV section
