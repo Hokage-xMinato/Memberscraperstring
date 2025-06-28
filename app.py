@@ -347,7 +347,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
     flood_retry_count = 0
     max_flood_retries = 3 
-    base_flood_wait_time_seconds = 3600 
+    base_flood_wait_time_seconds = 10 
 
     try: # Outer try block for the entire async function
         print(f"THREAD DEBUG: Initializing async client in new thread. API_ID: {api_id}")
@@ -420,7 +420,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) 
                 added_count += 1
                 print(f'Successfully added {user["username"] or user["id"]}. Waiting 75 seconds...') 
-                await asyncio.sleep(600) 
+                await asyncio.sleep(1) 
                 flood_retry_count = 0 
                 current_user_index += 1 # Advance for successful add
 
