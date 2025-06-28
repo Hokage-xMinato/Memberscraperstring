@@ -347,7 +347,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
 
     flood_retry_count = 0
     max_flood_retries = 3 
-    base_flood_wait_time_seconds = 10 
+    base_flood_wait_time_seconds = 0
 
     try: # Outer try block for the entire async function
         print(f"THREAD DEBUG: Initializing async client in new thread. API_ID: {api_id}")
