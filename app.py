@@ -420,7 +420,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) 
                 added_count += 1
                 print(f'Successfully added {user["username"] or user["id"]}. Waiting 75 seconds...') 
-                await asyncio.sleep(1) 
+                await asyncio.sleep(1800) 
                 flood_retry_count = 0 
                 current_user_index += 1 # Advance for successful add
 
