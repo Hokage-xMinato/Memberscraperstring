@@ -248,11 +248,11 @@
 
         <!-- Operations Section (Initially hidden) -->
         <div id="operationsSection" class="section hidden">
-            <h2 class="text-xl font-semibold mb-4 text-gray-700">2. Group Operations</h2>
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">2. Group/Channel Operations</h2>
 
-            <!-- List Groups -->
-            <h3 class="text-lg font-medium mb-3 text-gray-600">List Available Groups</h3>
-            <button id="listGroupsBtn">List Groups<span id="listGroupsSpinner" class="loading-spinner"></span></button>
+            <!-- List Groups/Channels -->
+            <h3 class="text-lg font-medium mb-3 text-gray-600">List Available Groups/Channels</h3>
+            <button id="listGroupsBtn">List Groups/Channels<span id="listGroupsSpinner" class="loading-spinner"></span></button>
             <div class="table-container mt-4 hidden" id="groupsTableContainer">
                 <table id="groupsTable">
                     <thead>
@@ -260,7 +260,7 @@
                             <th>Select</th>
                             <th>ID</th>
                             <th>Title</th>
-                            <!-- Type column removed -->
+                            <th>Type</th> <!-- New Type column -->
                         </tr>
                     </thead>
                     <tbody>
@@ -270,9 +270,9 @@
             </div>
 
             <!-- List Members -->
-            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">List Group Members</h3>
+            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">List Group/Channel Members</h3>
             <div class="input-group">
-                <label for="selectedGroupListMembers">Selected Group (from above):</label>
+                <label for="selectedGroupListMembers">Selected Group/Channel (from above):</label>
                 <select id="selectedGroupListMembers" disabled class="bg-gray-100"></select>
             </div>
             <button id="listMembersBtn">List Members<span id="listMembersSpinner" class="loading-spinner"></span></button>
@@ -304,13 +304,13 @@
 
 
             <!-- Add Members -->
-            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">Add Members to Group</h3>
+            <h3 class="text-lg font-medium mb-3 mt-6 text-gray-600">Add Members to Group/Channel</h3>
             <div class="input-group">
-                <label for="selectedGroupAddMembers">Selected Group (from above):</label>
+                <label for="selectedGroupAddMembers">Selected Group/Channel (from above):</label>
                 <select id="selectedGroupAddMembers" disabled class="bg-gray-100"></select>
             </div>
             <div class="input-group">
-                <label for="csvFile">Upload CSV (username,id,access_hash):</label>
+                <label for="csvFile">Upload CSV (username,id,access_hash,name):</label>
                 <input type="file" id="csvFile" accept=".csv">
             </div>
             <div class="input-group">
@@ -495,11 +495,11 @@
 
         listGroupsBtn.addEventListener('click', async () => {
             setButtonLoading(listGroupsBtn, listGroupsSpinner, true);
-            showMessage('info', 'Fetching groups...', true);
+            showMessage('info', 'Fetching groups/channels...', true);
             groupsTableBody.innerHTML = ''; // Clear previous groups
             allGroups = []; // Reset stored groups
-            selectedGroupListMembers.innerHTML = '<option value="">Select a Group</option>';
-            selectedGroupAddMembers.innerHTML = '<option value="">Select a Group</option>';
+            selectedGroupListMembers.innerHTML = '<option value="">Select a Group/Channel</option>';
+            selectedGroupAddMembers.innerHTML = '<option value="">Select a Group/Channel</option>';
             selectedGroupListMembers.disabled = true;
             selectedGroupAddMembers.disabled = true;
             groupsTableContainer.classList.add('hidden'); // Hide table until data is ready
@@ -514,7 +514,7 @@
                         const radioCell = row.insertCell();
                         const idCell = row.insertCell();
                         const titleCell = row.insertCell();
-                        // Removed Type cell here
+                        const typeCell = row.insertCell(); // New cell for Type
 
                         const radio = document.createElement('input');
                         radio.type = 'radio';
@@ -526,27 +526,28 @@
 
                         idCell.textContent = group.id;
                         titleCell.textContent = group.title;
+                        typeCell.textContent = group.type; // Display the new type field
 
                         // Add to dropdowns
                         const option1 = document.createElement('option');
                         option1.value = `${group.id}:${group.access_hash}`;
-                        option1.textContent = group.title; // Removed type from dropdown
+                        option1.textContent = `${group.title} (${group.type})`; // Show type in dropdown
                         selectedGroupListMembers.appendChild(option1);
 
                         const option2 = document.createElement('option');
                         option2.value = `${group.id}:${group.access_hash}`;
-                        option2.textContent = group.title; // Removed type from dropdown
+                        option2.textContent = `${group.title} (${group.type})`; // Show type in dropdown
                         selectedGroupAddMembers.appendChild(option2);
                     });
                     groupsTableContainer.classList.remove('hidden');
                     selectedGroupListMembers.disabled = false;
                     selectedGroupAddMembers.disabled = false;
-                    showMessage('success', `Found ${response.groups.length} groups.`, false); // Reverted message
+                    showMessage('success', `Found ${response.groups.length} groups/channels.`, false); 
                 } else {
-                    showMessage('info', 'No megagroups found.', false); // Reverted message
+                    showMessage('info', 'No groups/channels found that your account can manage.', false); 
                 }
             } catch (error) {
-                showMessage('error', `Error listing groups: ${error.message}`, false);
+                showMessage('error', `Error listing groups/channels: ${error.message}`, false);
             } finally {
                 setButtonLoading(listGroupsBtn, listGroupsSpinner, false);
             }
@@ -569,13 +570,13 @@
         listMembersBtn.addEventListener('click', async () => {
             const selectedOption = selectedGroupListMembers.value;
             if (!selectedOption) {
-                showMessage('error', 'Please select a group first.', false); // Reverted message
+                showMessage('error', 'Please select a group/channel first.', false); 
                 return;
             }
             const [groupId, groupHash] = selectedOption.split(':');
 
             setButtonLoading(listMembersBtn, listMembersSpinner, true);
-            showMessage('info', `Fetching members for group ID: ${groupId}...`, true);
+            showMessage('info', `Fetching members for group/channel ID: ${groupId}...`, true);
             membersTableBody.innerHTML = ''; // Clear previous members
             membersTableContainer.classList.add('hidden'); // Hide table until data is ready
             csvOutputSection.classList.add('hidden'); // Hide CSV section by default
@@ -599,9 +600,7 @@
                     // --- Generate and display CSV (UNQUOTED IDS/HASHES) ---
                     let csvContent = '"username","user_id","access_hash","name"\n'; 
                     response.members.forEach(member => {
-                        // Usernames and names might contain commas or special chars, keep them quoted.
                         const username = member.username ? `"${member.username.replace(/"/g, '""')}"` : '""';
-                        // User IDs and Access Hashes are numbers, unquote them.
                         const userId = member.user_id; 
                         const accessHash = member.access_hash !== null && member.access_hash !== undefined ? member.access_hash : ''; 
                         const name = member.name ? `"${member.name.replace(/"/g, '""')}"` : '""'; 
@@ -611,7 +610,7 @@
                     csvOutputSection.classList.remove('hidden'); // Show CSV section
 
                 } else {
-                    showMessage('info', 'No members found or group is empty.', false);
+                    showMessage('info', 'No members found or group/channel is empty.', false);
                     csvOutput.value = ''; // Clear CSV content
                     csvOutputSection.classList.add('hidden'); // Ensure CSV section is hidden
                 }
@@ -660,7 +659,7 @@
         addMembersBtn.addEventListener('click', async () => {
             const selectedOption = selectedGroupAddMembers.value;
             if (!selectedOption) {
-                showMessage('error', 'Please select a group first.', false); // Reverted message
+                showMessage('error', 'Please select a group/channel first.', false); 
                 return;
             }
             const [groupId, groupHash] = selectedOption.split(':');
