@@ -176,7 +176,9 @@ async def sign_in_route():
 @app.route('/get_groups', methods=['POST'])
 @run_async
 async def get_groups_route():
-    """Lists available megagroups for the authenticated user."""
+    """
+    Lists available megagroups and broadcast channels for the authenticated user.
+    """
     client = None
     try:
         client = await get_telegram_client_per_request_async()
@@ -191,16 +193,16 @@ async def get_groups_route():
             limit=200,
             hash=0
         ))
-        # Filter to include only megagroups (supergroups)
+        
         groups = []
         for chat in result.chats:
-            # Telethon returns different types of chat objects (Chat, Channel, User)
-            # Megagroups are instances of Channel
-            if isinstance(chat, Channel) and chat.megagroup:
+            if isinstance(chat, Channel): # Include all Channel types (megagroups and broadcast channels)
+                chat_type = "Megagroup" if chat.megagroup else "Broadcast Channel"
                 groups.append({
                     'id': chat.id,
                     'title': chat.title,
-                    'access_hash': chat.access_hash
+                    'access_hash': chat.access_hash,
+                    'type': chat_type # New field to distinguish
                 })
         
         return jsonify({"groups": groups})
@@ -217,7 +219,7 @@ async def get_groups_route():
 @app.route('/list_members', methods=['POST'])
 @run_async
 async def list_members_route():
-    """Lists members of a selected group and returns them."""
+    """Lists members of a selected group/channel and returns them."""
     data = request.json
     group_id_str = data.get('group_id')
     group_hash_str = data.get('group_hash')
@@ -236,14 +238,13 @@ async def list_members_route():
             group_id_int = int(group_id_str)
             group_hash_int = int(group_hash_str)
             
-            # Resolve the full entity object using client.get_entity()
             target_group_entity = await client.get_entity(InputPeerChannel(group_id_int, group_hash_int))
             
         except ValueError:
             return jsonify({"error": f"Invalid group ID or hash format. ID: '{group_id_str}', Hash: '{group_hash_str}'"}), 400
         except Exception as e:
             traceback.print_exc()
-            return jsonify({"error": f"Failed to resolve group entity (ID: '{group_id_str}', Hash: '{group_hash_str}'). Ensure it's a valid group you have access to. Detail: {str(e)}"}), 500
+            return jsonify({"error": f"Failed to resolve group/channel entity (ID: '{group_id_str}', Hash: '{group_hash_str}'). Ensure it's a valid entity you have access to. Detail: {str(e)}"}), 500
 
         participants = await client.get_participants(target_group_entity, aggressive=True)
         
@@ -267,7 +268,7 @@ async def list_members_route():
 
 @app.route('/add_members', methods=['POST'])
 def add_members_route():
-    """Initiates adding users from provided CSV data to a selected group in a separate thread."""
+    """Initiates adding users from provided CSV data to a selected group/channel in a separate thread."""
     data = request.json
     group_id_str = data.get('group_id')
     group_hash_str = data.get('group_hash')
@@ -286,7 +287,7 @@ def add_members_route():
         reader = csv.reader(csv_file, delimiter=',', lineterminator='\n')
         next(reader, None) # Safely skip header row
 
-        row_num = 1 # Start from 1 for header, 2 for first data row
+        row_num = 1 
         for row in reader:
             row_num += 1
             if len(row) < 4:
@@ -343,13 +344,13 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
     added_count = 0
     skipped_count = 0
     errors = []
-    current_user_index = 0 # Initialize here to ensure it's always available
+    current_user_index = 0 
 
     flood_retry_count = 0
     max_flood_retries = 3 
-    base_flood_wait_time_seconds = 0
+    base_flood_wait_time_seconds = 3600 
 
-    try: # Outer try block for the entire async function
+    try: 
         print(f"THREAD DEBUG: Initializing async client in new thread. API_ID: {api_id}")
         session_obj = StringSession(string_session_env) if string_session_env else StringSession(None)
         thread_client = TelegramClient(session_obj, int(api_id), api_hash)
@@ -358,7 +359,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
         if not await thread_client.is_user_authorized():
             print("THREAD ERROR: Client in new thread is not authorized. Stopping add operation.")
             errors.append("Client in adding thread not authorized. Please re-authenticate via the UI.")
-            return # Early exit for critical authorization failure
+            return 
 
         print(f"THREAD DEBUG: Async client connected and authorized in thread for group ID: {group_id_int}")
         
@@ -394,7 +395,7 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 current_user_index += 1 
                 continue 
             
-            try: # Inner try block for individual user addition attempt
+            try: 
                 print(f'Attempting to add {user["username"] or user["id"]} (User {current_user_index + 1}/{len(users_list)})')
                 user_entity = None
                 
@@ -414,20 +415,19 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                     user_entity = InputPeerUser(int(user['id']), int(user['access_hash']))
                 else: 
                     errors.append(f'Skipped user {user["username"] or user["id"]}: Invalid add method specified.')
-                    break # Exit while loop entirely if method is invalid
+                    break 
 
-                # If user_entity is resolved, attempt to invite
                 await thread_client(InviteToChannelRequest(target_group_entity, [user_entity])) 
                 added_count += 1
                 print(f'Successfully added {user["username"] or user["id"]}. Waiting 75 seconds...') 
-                await asyncio.sleep(60) 
+                await asyncio.sleep(75) 
                 flood_retry_count = 0 
-                current_user_index += 1 # Advance for successful add
+                current_user_index += 1 
 
             except PeerFloodError as e:
                 flood_retry_count += 1
                 wait_time = getattr(e, 'seconds', base_flood_wait_time_seconds * (2 ** (flood_retry_count - 1)))
-                wait_time = min(wait_time, 24 * 3600) # Cap at 24 hours
+                wait_time = min(wait_time, 24 * 3600) 
                 
                 error_msg = (f'PeerFloodError for {user["username"] or user["id"]}: Too many requests. '
                              f'Telegram asks to wait {wait_time/3600:.1f} hours ({wait_time} seconds) before retrying. '
@@ -437,11 +437,10 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 if flood_retry_count <= max_flood_retries:
                     print(f"RECOMMENDATION: Your account is likely flood-limited. Consider pausing for {wait_time/3600:.1f} hours, or using a different account for future operations. The script will wait, but this is a Telegram restriction.")
                     await asyncio.sleep(wait_time)
-                    # current_user_index is NOT incremented here, we retry the same user
                 else:
                     errors.append(f'PeerFloodError: Maximum retries ({max_flood_retries}) exceeded for {user["username"] or user["id"]}. Stopping addition.')
                     print(f'CRITICAL: Max flood retries exceeded. Stopping add operation at user {current_user_index + 1}.')
-                    break # Exit while loop entirely
+                    break 
             except (UserPrivacyRestrictedError, UserNotMutualContactError, UserAlreadyParticipantError, UserIdInvalidError) as e: 
                 skipped_count += 1
                 errors.append(f'Skipped {user["username"] or user["id"]}: {e.__class__.__name__} - {str(e)}')
@@ -456,13 +455,12 @@ async def _add_members_threaded_async(api_id, api_hash, string_session_env, grou
                 current_user_index += 1 
                 flood_retry_count = 0 
 
-    except Exception as e: # This is the outer except block for any critical errors outside the per-user loop
+    except Exception as e: 
         print(f"THREAD CRITICAL ERROR: An unexpected error occurred in the adding thread: {e}")
         traceback.print_exc()
         errors.append(f"CRITICAL THREAD ERROR: {e.__class__.__name__} - {str(e)}") 
-        # current_user_index will retain its value from before the crash
         
-    finally: # This finally block always runs, for cleanup and final message
+    finally: 
         final_message_remaining_users = len(users_list) - current_user_index
         final_message_str = (f'Finished adding members. '
                              f'Added: {added_count}, Skipped: {skipped_count}. '
